@@ -10,6 +10,8 @@ import customTheme from "./customTheme";
 import "@cloudscape-design/global-styles/index.css";
 import { applyMode, Mode } from "@cloudscape-design/global-styles";
 import { applyTheme } from "@cloudscape-design/components/theming";
+import { ChatSessionProvider } from "./components/Agent/ChatContext";
+import { ThemeProvider } from './components/ThemeContext';
 
 const App = () => {
   const [loading, setLoading] = useState(true);
@@ -99,6 +101,12 @@ const App = () => {
           </div>
         </SpaceBetween>
       ) : authUser ? (
+        <ThemeProvider 
+        colorMode={colorMode} 
+        effectiveTheme={effectiveTheme} 
+        setThemeMode={setThemeMode}
+      >  
+        <ChatSessionProvider>
         <SplitPanelProvider>
           <TopNavigationMFE
             user={authUser}
@@ -109,6 +117,8 @@ const App = () => {
           />
           <AppLayoutMFE user={authUser} colorMode={colorMode} setThemeMode={setThemeMode} />
         </SplitPanelProvider>
+        </ChatSessionProvider>
+        </ThemeProvider>
       ) : (
         <LoginPageInternal setAuthUser={checkAuthState} />
       )}

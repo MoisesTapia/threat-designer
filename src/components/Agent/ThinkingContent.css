@@ -1,0 +1,106 @@
+.thinking-content-container {
+  flex: 1;
+  padding-right: 4px;
+  margin-left: 10px;
+  border-radius: 8px;
+  overflow: hidden;
+  /* Default transition for expanding */
+  transition: max-height 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+  
+.thinking-content-container.collapsed {
+  max-height: 0;
+  padding-top: 8px;
+  padding-bottom: 1px;
+  /* Faster transition when collapsing */
+  transition: max-height 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.thinking-content-container.expanded {
+  padding-top: 8px;
+  padding-bottom: 1px;
+  /* max-height is set inline via style prop */
+}
+
+.thinking-content-wrapper {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0px);
+  transition: opacity 0.2s ease-out, 
+              filter 0.2s ease-out,
+              transform 0.2s ease-out;
+}
+
+/* Apply blur and fade when parent is collapsed */
+.thinking-content-container.collapsed .thinking-content-wrapper {
+  opacity: 0;
+  filter: blur(4px);
+  transform: translateY(-5px);
+}
+
+.thinking-container {
+  position: relative;
+  width: 100%;
+}
+
+.thinking-content-area {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+}
+
+.thinking-line-container {
+  position: relative;
+  width: 12px;
+  flex-shrink: 0;
+  margin-top: 8px;
+  transition: width 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.thinking-line-container.collapsed {
+  width: 12px;
+}
+
+.thinking-line-container.expanded {
+  width: 12px;
+}
+
+/* Line mask that expands from top to bottom */
+.thinking-line-mask {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  transition: height 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.thinking-line-mask.collapsed {
+  height: 0;
+  /* Match the faster collapse timing */
+  transition: height 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.thinking-line-mask.expanded {
+  /* Explicitly set for expanding */
+  transition: height 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* Static line elements - no individual animations */
+.thinking-line-segment-static,
+.thinking-line-dot-static {
+  opacity: 1;
+}
+
+/* Ensure smooth text rendering during animation */
+.thinking-content-wrapper {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform, opacity, filter;
+}
+
+/* Remove any conflicting styles */
+.thinking-line-dot,
+.thinking-line-segment {
+  transition-delay: 0s !important;
+}

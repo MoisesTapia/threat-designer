@@ -34,7 +34,7 @@ export const Threats = ({ color = "#ffffff" }) => (
   </svg>
 );
 
-export const Thinking = ({ color = "#ffffff" }) => (
+export const Thinking = ({ color = "#ffffff", width="64px", height="64px" }) => (
   <svg
     fill={color}
     version="1.1"
@@ -42,8 +42,8 @@ export const Thinking = ({ color = "#ffffff" }) => (
     xmlns="http://www.w3.org/2000/svg"
     viewBox="-3.2 -3.2 38.40 38.40"
     xmlSpace="preserve"
-    width="64px"
-    height="64px"
+    width={width}
+    height={height}
     stroke={color}
     strokeWidth="0.00032"
   >

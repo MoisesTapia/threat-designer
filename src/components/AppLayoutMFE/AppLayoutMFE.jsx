@@ -4,6 +4,7 @@ import Main from "../../Main";
 import "@cloudscape-design/global-styles/index.css";
 import { useSplitPanel } from "../../SplitPanelContext";
 import { useLocation } from "react-router-dom";
+import Agent from "../../pages/Agent/Agent"
 
 const appLayoutLabels = {
   navigation: "Side navigation",
@@ -28,6 +29,37 @@ function AppLayoutMFE({ user }) {
     }
   };
 
+  const items = [
+    {
+      ariaLabels: {
+        closeButton: "Close",
+        drawerName: "Assistant",
+        triggerButton: "Open Assistant",
+        resizeHandle: "Resize Assistant",
+      },
+      resizable: true,
+      defaultSize: 650,
+      content: (
+        <div
+        style={{
+          overflowY: "auto",
+          minWidth: "600",
+          paddingLeft: "10px",
+          paddingTop: "20px",
+          paddingRight: "24px",
+          paddingBottom: "0px",
+        }}
+      >
+            <Agent user={user} inTools={true}/>
+          </div>
+      ),
+      id: "Assistant",
+      trigger: {
+        iconName: "gen-ai",
+      },
+    },
+  ];
+
   return (
     <div>
       {user && (
@@ -36,6 +68,7 @@ function AppLayoutMFE({ user }) {
           splitPanelOpen={splitPanelOpen}
           splitPanelPreferences={{ position: "side" }}
           onSplitPanelToggle={(event) => setSplitPanelOpen(event.detail.open)}
+          drawers={!splitPanelOpen ? items : []}
           splitPanel={
             <SplitPanel
               hidePreferencesButton={true}
