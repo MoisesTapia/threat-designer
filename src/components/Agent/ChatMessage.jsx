@@ -6,13 +6,15 @@ import ContentResolver from "./ContentResolver";
 const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
   const substract = "330px";
 
-  const isEnd = message?.end === true;
+  const isEnd = message?.[message.length - 1]?.end === true;
+
 
   useEffect(() => {
     if(isLast){
-      scroll();
+      setTimeout(() => {
+        scroll();
+      }, 10);
     }
-    
   }, []);
   
 
@@ -47,13 +49,13 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
             type: 'tool',
             toolName: item.tool,
             content: item.content,
-            isComplete: !item.tool_start, // Complete when tool_start is false
+            isComplete: !item.tool_start, // FIXED: Complete when tool_start is false
             error: item.error,
             items: [item]
           });
         }
         currentBlock = null;
-      } else if (item.type === 'text' || item.type === 'think') {
+      } else if ((item.type === 'text' || item.type === 'thinking') && item.content != null) {
         // Group consecutive items of same type
         if (currentBlock && currentBlock.type === item.type) {
           // Continue current block
@@ -66,7 +68,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
           currentBlock = {
             type: item.type,
             content: item.content, // Changed from item.text to item.content
-            isComplete: !nextItem || nextItem.type !== item.type,
+            isComplete: nextItem != null && nextItem.type !== item.type,
             items: [item]
           };
           blocks.push(currentBlock);
@@ -77,14 +79,6 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
     return blocks;
   }, [message]);
   
-  // Calculate if we're currently in a thinking phase
-  const thinkingLoading = useMemo(() => {
-    return messageBlocks.some(block => 
-      block.type === 'think' && !block.isComplete
-    );
-  }, [messageBlocks]);
-
-
   return (
     <div
       style={{
@@ -97,7 +91,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
       }}
     >
       <MessageAvatar
-        isUser={thinkingLoading}
+        isUser={false}
         loading={streaming && !isEnd}
       />
 
@@ -106,7 +100,6 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
           flex: 1,
           minWidth: 0,
           overflow: "hidden",
-          marginTop: "-14px",
         }}
       >
         <div
@@ -120,7 +113,6 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
     <ContentResolver 
       msg={block} 
       type={block.type} 
-      thinkingLoading={false}
       isBlockComplete={block.isComplete}
     />
   </div>

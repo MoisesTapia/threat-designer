@@ -251,7 +251,7 @@ export const Stepper = ({ steps, currentStep = 0, onViewportChange }) => {
               className="step-icon active"
               style={{
                 background:
-                  "radial-gradient(circle farthest-corner at top left,rgba(0, 150, 250, 1) -25%,rgba(0, 150, 250, 0) 55%),radial-gradient(circle farthest-corner at top right, rgba(216, 178, 255, 1) -10%, rgba(115, 0, 229, 1) 50%)",
+                  "radial-gradient(circle farthest-corner at top right, #b8e7ff 0%, #0099ff 25%, #5c7fff 40% , #8575ff 60%, #962eff 80%)",
                 color: "white",
               }}
             >
@@ -292,7 +292,7 @@ export const Stepper = ({ steps, currentStep = 0, onViewportChange }) => {
                         background:
                           index > currentStep
                             ? "#b4b4bb"
-                            : "radial-gradient(circle farthest-corner at top left,rgba(0, 150, 250, 1) -25%,rgba(0, 150, 250, 0) 55%),radial-gradient(circle farthest-corner at top right, rgba(216, 178, 255, 1) -10%, rgba(115, 0, 229, 1) 50%)",
+                            : "radial-gradient(circle farthest-corner at top right, #b8e7ff 0%, #0099ff 25%, #5c7fff 40% , #8575ff 60%, #962eff 80%)",
                         color: "white",
                       }
                 }

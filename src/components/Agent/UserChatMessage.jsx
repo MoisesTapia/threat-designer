@@ -59,7 +59,7 @@ const UserChatMessage = React.memo(({ message, user }) => {
             backgroundColor: colorBackgroundChatBubbleIncoming,
             padding: "1px 12px 1px 12px",
             borderRadius: "8px",
-            width: "fit-content",
+            width: "100%",
           }}
         >
           <ContentResolver 

@@ -28,6 +28,9 @@ import {
 } from "../../services/ThreatDesigner/stats";
 import { useSplitPanel } from "../../SplitPanelContext";
 import "./ThreatModeling.css";
+import { useEventReceiver } from '../Agent/useEventReceiver';
+import { useSessionInitializer } from "../Agent/useSessionInit";
+
 
 const blobToBase64 = (blob) => {
   return new Promise((resolve) => {
@@ -50,6 +53,7 @@ const arrayToObjects = (key, stringArray) => {
 
 export const ThreatModel = ({ user }) => {
   const { id = null } = useParams();
+  
   const BreadcrumbItems = [
     { text: "Threat Catalog", href: "/threat-catalog" },
     { text: `${id}`, href: `/${id}` },
@@ -72,6 +76,7 @@ export const ThreatModel = ({ user }) => {
   const navigate = useNavigate();
   const [deleteModalVisible, setDeleteModal] = useState(false);
   const { setTrail, handleHelpButtonClick, setSplitPanelOpen } = useSplitPanel();
+  const {updateSessionContext } = useSessionInitializer()
   const handleReplayThreatModeling = async (iteration, reasoning) => {
     try {
       setIteration(0);
@@ -96,6 +101,33 @@ export const ThreatModel = ({ user }) => {
       previousResponse.current = null;
     }
   };
+
+  const initializeThreatModelSession = useCallback(async (threatModelData) => {
+    const sessionContext = {
+      diagram: threatModelData.s3Location,
+      threatModel: {
+        threats: threatModelData.threat_list.threats || [],
+        summary: threatModelData.summary,
+        system_architecture: threatModelData.system_architecture,
+        title: threatModelData.title
+      }
+    };
+
+    try {
+      await updateSessionContext(id, sessionContext);
+    } catch (error) {
+      console.error(`Failed to initialize session ${id}:`, error);
+    }
+  }, [updateSessionContext, id]);
+
+
+  const handleInterruptEvent = (event) => {
+    const { interruptMessage, source, timestamp } = event.payload;
+    
+    console.log(`Interrupt received from ${source}:`, interruptMessage);
+  };
+
+  useEventReceiver('CHAT_INTERRUPT', id, handleInterruptEvent);
 
   const handleDownload = async (format = "docx") => {
     try {
@@ -201,9 +233,12 @@ export const ThreatModel = ({ user }) => {
           throw new Error(`Invalid type: ${type}`);
       }
 
+      initializeThreatModelSession(
+        newState.item)
+
       setResponse(newState);
     },
-    [response, setResponse]
+    [response, setResponse, initializeThreatModelSession]
   );
 
   useEffect(() => {
@@ -230,6 +265,9 @@ export const ThreatModel = ({ user }) => {
             if (!previousResponse.current) {
               previousResponse.current = JSON.parse(JSON.stringify(resultsResponse.data));
             }
+            await initializeThreatModelSession(
+              resultsResponse.data.item)
+
             setState((prevState) => ({
               ...prevState,
               processing: false,

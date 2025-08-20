@@ -1,10 +1,15 @@
 import React from "react";
-import Button from "@cloudscape-design/components/button";
+import "./ScrollButton.css";
+import { useTheme } from "../ThemeContext";
 
-export const ScrollButton = React.memo(({ onClick, direction }) => (
-  <Button
-    iconName={direction === "top" ? "angle-up" : "angle-down"}
-    variant="primary"
+export const ScrollButton = React.memo(({ onClick, direction }) => {
+  const { effectiveTheme } = useTheme();
+  return (
+  <button
+    className={`scroll-button ${effectiveTheme}`}
     onClick={onClick}
-  />
-));
+    aria-label={`Scroll to ${direction}`}
+  >
+    {direction === "top" ? "↑" : "↓"}
+  </button>
+)});

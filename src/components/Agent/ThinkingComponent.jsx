@@ -62,7 +62,6 @@ export const ReasoningComponent = ({ loading, onClick }) => {
   };
 
   const textStyle = {
-    paddingTop: "15px",
     cursor: "pointer", // Always show pointer cursor
   };
 

@@ -19,6 +19,7 @@
 .thinking-content-container.expanded {
   padding-top: 8px;
   padding-bottom: 1px;
+  margin-bottom: 8px;
   /* max-height is set inline via style prop */
 }
 

@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { CodeRenderer, CustomTable } from "./MarkdownRenderers";
 
 const TextContent = ({ content, fontSize }) => (
+  <div style={{ marginBottom: "16px"}}>
     <Markdown
       children={content}
       remarkPlugins={[remarkGfm]}
@@ -12,6 +13,7 @@ const TextContent = ({ content, fontSize }) => (
         table: CustomTable,
       }}
     />
+    </div>
 );
 
 export default TextContent;
