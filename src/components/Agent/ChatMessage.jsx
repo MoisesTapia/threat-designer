@@ -13,7 +13,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll, isParentFi
   useEffect(() => {
     if(isLast && !hasScrolled.current){
       hasScrolled.current = true;
-      const timeout = isParentFirstMount ? 1000 : 60;
+      const timeout = isParentFirstMount ? 100 : 60;
       
       setTimeout(() => {
         scroll();

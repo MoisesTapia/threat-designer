@@ -19,6 +19,7 @@ const ToolContent = React.memo(({
   const [showContent, setShowContent] = useState(false);
   const [shouldExpandWidth, setShouldExpandWidth] = useState(false);
   const containerRef = useRef(null);
+  const wasFirstMountRef = useRef(isParentFirstMount);
   
   const state = propState || 'loading';
   const text = propText || '';
@@ -42,10 +43,9 @@ const ToolContent = React.memo(({
         setTimeout(() => {
           setShowExpandButton(true);
           
-          // Auto-expand content if needed - apply same logic as ThinkingContent
-          const shouldAutoExpand = (isParentFirstMount && state !== 'loading') || 
-                                  (!isParentFirstMount && expanded);
-          
+          // Auto-expand content if needed - use captured initial value
+          const shouldAutoExpand = !wasFirstMountRef.current && expanded;
+
           if (shouldAutoExpand && !hasAutoExpanded) {
             setTimeout(() => {
               setIsExpanded(true);
@@ -56,7 +56,7 @@ const ToolContent = React.memo(({
               setHasAutoExpanded(true);
               onExpand?.(true);
             }, 200); // Wait for button to appear
-          }
+          }          
         }, 200); // Wait for width animation to start
       });
     } else if (state === 'loading') {
@@ -68,7 +68,7 @@ const ToolContent = React.memo(({
     }
     
     setPrevState(state);
-  }, [state, prevState, hasChildren, expanded, hasAutoExpanded, isParentFirstMount]);
+  }, [state, prevState, hasChildren, expanded, hasAutoExpanded]);
 
   const handleExpand = () => {
     if (!isExpanded) {

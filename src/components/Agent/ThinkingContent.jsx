@@ -5,12 +5,13 @@ import { useTheme } from "../ThemeContext";
 import "./ThinkingContent.css";
 
 const ThinkingContent = ({ content, onToggle, thinkingLoading, isParentFirstMount }) => {
-  const [expanded, setExpanded] = useState(isParentFirstMount || false);
+  const [expanded, setExpanded] = useState(false);
   const [contentHeight, setContentHeight] = useState(0);
   const contentRef = useRef(null);
   const wrapperRef = useRef(null);
   const resizeObserverRef = useRef(null);
   const { effectiveTheme } = useTheme();
+  const wasFirstMountRef = useRef(isParentFirstMount);
 
   const handleToggle = useCallback(() => {
     const newState = !expanded;
@@ -20,11 +21,12 @@ const ThinkingContent = ({ content, onToggle, thinkingLoading, isParentFirstMoun
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setExpanded((isParentFirstMount && !thinkingLoading) || (!isParentFirstMount && thinkingLoading === false));
+      setExpanded(thinkingLoading === false && !wasFirstMountRef.current);
     }, 50);
-  
+
     return () => clearTimeout(timer);
-  }, [thinkingLoading, isParentFirstMount]);
+  }, [thinkingLoading]);
+
 
 
   const getTextColor = () => {
