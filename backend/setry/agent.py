@@ -20,6 +20,8 @@ from utils import (
     diagram_cache, get_history
 )
 from langgraph.types import Command
+from langgraph_checkpoint_aws.saver import BedrockSessionSaver
+
 
 boto_client = create_bedrock_client()
 
@@ -37,6 +39,9 @@ current_diagram_hash = None
 current_diagram_data = None
 current_budget_level = 0  # Default to level 1 (8000 tokens)
 
+# Global session cache - maps session headers to session IDs
+session_cache = {}
+
 # All available tools - by default all are enabled
 ALL_AVAILABLE_TOOLS = [add_threats, edit_threats, delete_threats]
 
@@ -51,9 +56,45 @@ class InvocationRequest(BaseModel):
     input: Dict[str, Any]
 
 
-checkpointer = InMemorySaver()
+# checkpointer = InMemorySaver()
+
+checkpointer = BedrockSessionSaver()
 
 model_id = MODEL_ID
+
+
+def get_or_create_session_id(session_header: str) -> str:
+    """
+    Get existing session ID for the given header or create a new one.
+    Uses global cache to store mapping between session headers and session IDs.
+    
+    Args:
+        session_header: The session header from the HTTP request
+        
+    Returns:
+        str: The session ID (existing or newly created)
+    """
+    global session_cache
+    
+    # Check if we already have a session ID for this header
+    if session_header in session_cache:
+        logger.info(f"Found existing session ID for header: {session_header}")
+        return session_cache[session_header]
+    
+    # Create new session ID using the checkpointer's session client
+    try:
+        new_session = checkpointer.session_client.create_session()
+        session_id = new_session.session_id
+        
+        # Cache the mapping
+        session_cache[session_header] = session_id
+        
+        logger.info(f"Created new session ID {session_id} for header: {session_header}")
+        return session_id
+        
+    except Exception as e:
+        logger.error(f"Failed to create session for header {session_header}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create session")
 
 
 def extract_budget_level(input_data: Dict[str, Any]) -> Optional[int]:
@@ -125,7 +166,7 @@ async def get_agent_with_preferences(tool_preferences: Optional[List[str]], cont
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global cached_agent, current_tool_preferences
+    global cached_agent, current_tool_preferences, session_cache
     logger.info("Initializing with all available tools, no context, and no diagram...")
 
     try:
@@ -148,6 +189,10 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Cleaned up cached diagram: {file_path}")
         except Exception as e:
             logger.warning(f"Failed to clean up cached diagram {file_path}: {e}")
+    
+    # Clear session cache
+    session_cache.clear()
+    logger.info("Cleared session cache")
 
 app = FastAPI(title="Operator Agent Server", version="1.0.0", lifespan=lifespan)
 
@@ -175,6 +220,10 @@ async def invoke(request: InvocationRequest, http_request: Request):
     session_header = http_request.headers.get("X-Amzn-Bedrock-AgentCore-Runtime-Session-Id")
     if not session_header:
         raise MissingHeader
+    
+    # Get or create session ID for this session header
+    session_id = get_or_create_session_id(session_header)
+    # session_id = f"arn:aws:bedrock:us-east-1:541020177866:session/{session_header}"
 
     request_type = request.input.get("type")
     
@@ -204,7 +253,7 @@ async def invoke(request: InvocationRequest, http_request: Request):
     
     if request_type == "history":
         return JSONResponse(
-            get_history(cached_agent, session_header),
+            get_history(cached_agent, session_id),
             headers={
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -273,7 +322,7 @@ async def invoke(request: InvocationRequest, http_request: Request):
             )
 
     # For streaming requests, call the streaming function
-    return await streaming_invoke(request, http_request, session_header)
+    return await streaming_invoke(request, http_request, session_id)
 
 executor = ThreadPoolExecutor(max_workers=2)
 

@@ -21,7 +21,7 @@ export const ChatSessionDataContext = createContext(null);
 // Replace the current endpoint constants
 const API_ENDPOINT = 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A541020177866%3Aruntime%2Fagent-UUfBGsBktn/invocations?qualifier=DEFAULT';
 const TOOLS_ENDPOINT = 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A541020177866%3Aruntime%2Fagent-UUfBGsBktn/invocations?qualifier=DEFAULT'; 
-const SESSION_HISTORY_ENDPOINT = '/invocations';
+const SESSION_HISTORY_ENDPOINT = 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A541020177866%3Aruntime%2Fagent-UUfBGsBktn/invocations?qualifier=DEFAULT'; 
 const SESSION_PREPARE_ENDPOINT = 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A541020177866%3Aruntime%2Fagent-UUfBGsBktn/invocations?qualifier=DEFAULT';
 const SESSION_CLEAR_ENDPOINT = '/invocations';
 const PING_ENDPOINT = 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A541020177866%3Aruntime%2Fagent-UUfBGsBktn/invocations?qualifier=DEFAULT'; 
@@ -238,11 +238,23 @@ export const ChatSessionProvider = ({ children }) => {
     // Fetch session history
     const fetchSessionHistory = async (sessionId) => {
       try {
-        const response = await fetch(`${SESSION_HISTORY_ENDPOINT}/${sessionId}/history`, {
-          method: 'GET',
+
+        let requestBody = {
+          input: {
+            type: "history"
+          }
+        };
+
+        const token = await getAuthToken();
+        
+        const response = await fetch(SESSION_HISTORY_ENDPOINT, {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
           },
+          body: JSON.stringify(requestBody),
         });
         
         if (!response.ok) {
@@ -250,7 +262,7 @@ export const ChatSessionProvider = ({ children }) => {
         }
         
         const data = await response.json();
-        return data.chatTurns || [];
+        return data || [];
       } catch (error) {
         console.warn(`Failed to fetch session ${sessionId} history:`, error);
         return null;
@@ -578,7 +590,6 @@ export const ChatSessionProvider = ({ children }) => {
 
     // Send message
     const sendMessage = async (sessionId, userMessage, interrupt = false, interruptResponse = null) => {
-      console.log(interruptResponse);
       if (!userMessage.trim()) {
         return;
       }

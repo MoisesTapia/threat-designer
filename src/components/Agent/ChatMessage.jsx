@@ -8,23 +8,16 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll, isParentFi
   const isEnd = message?.[message.length - 1]?.end === true;
   const hasScrolled = useRef(false);
 
-  console.log(isParentFirstMount);
-
   useEffect(() => {
     if(isLast && !hasScrolled.current){
       hasScrolled.current = true;
-      const timeout = isParentFirstMount ? 100 : 60;
+      const timeout = 60;
       
       setTimeout(() => {
         scroll();
       }, timeout);
     }
   }, [isLast, scroll]);
-
-
-
-
-  
 
   const messageBlocks = useMemo(() => {
     if (!message || message.length === 0) return [];
@@ -34,6 +27,12 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll, isParentFi
     
     for (let i = 0; i < message.length; i++) {
       const item = message[i];
+      
+      // Skip interrupt messages - they don't influence block calculation
+      if (item.type === 'interrupt') {
+        continue;
+      }
+      
       const nextItem = message[i + 1];
       
       if (item.type === 'tool') {
@@ -67,7 +66,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll, isParentFi
         // Group consecutive items of same type
         if (currentBlock && currentBlock.type === item.type) {
           // Continue current block
-          currentBlock.content += item.content; // Changed from item.text to item.content
+          currentBlock.content += item.content;
           currentBlock.items.push(item);
           // Block is complete if next item is different type or no next item
           currentBlock.isComplete = !nextItem || nextItem.type !== item.type;
@@ -75,7 +74,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll, isParentFi
           // Start new block
           currentBlock = {
             type: item.type,
-            content: item.content, // Changed from item.text to item.content
+            content: item.content,
             isComplete: nextItem != null && nextItem.type !== item.type,
             items: [item]
           };
@@ -86,7 +85,6 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll, isParentFi
     
     return blocks;
   }, [message]);
-  
 
   return (
     <div
@@ -118,16 +116,16 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll, isParentFi
             marginTop: "-14px",
           }}
         >
-{messageBlocks.map((block, index) => (
-  <div key={index} style={{ marginBottom: "2px" }}>
-    <ContentResolver 
-      msg={block} 
-      type={block.type} 
-      isBlockComplete={block.isComplete}
-      isParentFirstMount={isParentFirstMount}
-    />
-  </div>
-))}
+          {messageBlocks.map((block, index) => (
+            <div key={index} style={{ marginBottom: "2px" }}>
+              <ContentResolver 
+                msg={block} 
+                type={block.type} 
+                isBlockComplete={block.isComplete}
+                isParentFirstMount={isParentFirstMount}
+              />
+            </div>
+          ))}
 
           {isEnd && <ChatButtons content={message} />}
         </div>

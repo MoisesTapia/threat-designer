@@ -15,6 +15,7 @@ from langchain_aws import ChatBedrockConverse
 from prompt import system_prompt
 import base64
 import inspect
+from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
 
 
 # Configure logger
@@ -483,5 +484,126 @@ def get_history(agent, id):
         }
     history = agent.get_state_history(config=config, limit=1)
     last = next(history, None)
-    logger.info(last)
-    return str(last) if last else None
+    interrupt = None
+    
+    if last:
+        # Check if there are interrupts and extract the first one
+        if last.interrupts and len(last.interrupts) > 0:
+            logger.info("Interrupting......")
+            logger.info(last.interrupts[0])
+            interrupt = last.interrupts[0].value
+            
+        msg = last.values.get("messages", [])
+        formatted_history = format_chat_for_frontend(msg, interrupt)
+        return formatted_history
+    return None
+
+
+
+def format_chat_for_frontend(backend_messages, interrupt=None):
+    """
+    Convert backend message format to frontend format.
+    
+    Args:
+        backend_messages: List of message objects from backend (HumanMessages, AIMessages, ToolMessages)
+        interrupt: Optional interrupt data to add at the end
+    
+    Returns:
+        List of chatTurn objects for frontend consumption
+    """
+    import time
+    import random
+    import string
+    import json
+    
+    chat_turns = []
+    current_turn = None
+    
+    def generate_turn_id():
+        timestamp = int(time.time() * 1000)
+        random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=9))
+        return f"turn_{timestamp}_{random_suffix}"
+    
+    for message in backend_messages:
+        if isinstance(message, HumanMessage):
+            # Start a new turn
+            if current_turn:
+                chat_turns.append(current_turn)
+            
+            current_turn = {
+                "id": generate_turn_id(),
+                "userMessage": message.content[0].get('text', "") if message.content else "",
+                "aiMessage": []
+            }
+            
+        elif isinstance(message, AIMessage):
+            if not current_turn:
+                # Handle case where AI message comes without user message
+                current_turn = {
+                    "id": generate_turn_id(),
+                    "userMessage": "",
+                    "aiMessage": []
+                }
+            
+            logger.info(f"AIMessage: {message.content}")
+            
+            # Process each content item in the AIMessage
+            for content_item in message.content:
+                if content_item.get('type') == "reasoning_content":
+                    current_turn["aiMessage"].append({
+                        "type": "think",
+                        "content": content_item['reasoning_content']['text']
+                    })
+                elif content_item.get('type') == "tool_use":
+                    current_turn["aiMessage"].append({
+                        "type": "tool",
+                        "tool_name": content_item['name'],
+                        "tool_start": True
+                    })
+                else:
+                    # Regular text content
+                    text_content = content_item.get('text', "").strip()
+                    if text_content:  # Only add non-empty text
+                        current_turn["aiMessage"].append({
+                            "type": "text", 
+                            "content": text_content
+                        })
+                
+        elif isinstance(message, ToolMessage):
+            if current_turn:
+                logger.info(f"ToolMessage: {message.content}")
+                try:
+                    content = json.loads(message.content)
+                    current_turn["aiMessage"].append({
+                        "type": "tool",
+                        "tool_name": message.name,
+                        "tool_start": False,
+                        "content": content
+                    })
+                except Exception as e:
+                    logger.info("Unable to parse tool message content")
+                    current_turn["aiMessage"].append({
+                        "type": "tool", 
+                        "tool_name": message.name,
+                        "tool_start": False,
+                        "content": message.content
+                    })
+    
+    # Add the last turn if it exists
+    if current_turn:
+        chat_turns.append(current_turn)
+    
+    # Add interrupt as final message if provided
+    if interrupt:
+        if chat_turns:
+            # Add interrupt to the last turn's aiMessage
+            chat_turns[-1]["aiMessage"].append({"type": "interrupt", "content": interrupt})
+        else:
+            # Create a new turn for the interrupt
+            chat_turns.append({
+                "id": generate_turn_id(),
+                "userMessage": "",
+                "aiMessage": [{"type": "interrupt", "content": interrupt}]
+            })
+    
+    return chat_turns
