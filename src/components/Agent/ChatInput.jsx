@@ -1,6 +1,8 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import "./ChatInput.css";
 import { useTheme } from "../ThemeContext";
+import { ChatSessionFunctionsContext, ChatSessionDataContext } from './ChatContext';
+import { useContext } from 'react';
 
 const ChatInput = ({
   onSendMessage,
@@ -12,6 +14,8 @@ const ChatInput = ({
   disabled = false,
   isStreaming = false,
   sessionId = null,
+  tools = [],
+  thinkingBudget = 0,
   onToggleButton = () => {},
   onDropdownClick = () => {},
 }) => {
@@ -23,7 +27,11 @@ const ChatInput = ({
   const containerRef = useRef(null);
   const dropdownRefs = useRef({});
   const buttonRefs = useRef({});
+  const debounceTimerRef = useRef(null);
+  const preparingRef = useRef(false); // Add this ref to track preparation status
   const { effectiveTheme } = useTheme();
+  const functions = useContext(ChatSessionFunctionsContext);
+  const context = functions.getSessionContext(sessionId);
   
   const [currentSessionId] = useState(() => {
     if (sessionId) return sessionId;
@@ -37,6 +45,89 @@ const ChatInput = ({
     
     return generateSessionId();
   });
+
+
+  // Convert thinkingBudget value
+  const processedThinkingBudget = thinkingBudget === false ? 0 : thinkingBudget;
+
+  // Function to prepare session
+  const prepareSession = useCallback(async () => {
+    // If already preparing, skip this call
+    if (preparingRef.current) {
+      return;
+    }
+  
+    preparingRef.current = true;
+    
+    try {
+      // Parse and filter tools to get only enabled tool IDs
+      const enabledToolIds = tools
+        ?.filter(tool => {
+          // Handle both string and object formats
+          if (typeof tool === 'string') {
+            // If it's a string representation, parse it
+            const parsed = eval(`(${tool})`); // or JSON.parse if it's JSON format
+            return parsed.enabled === true;
+          } else if (typeof tool === 'object') {
+            // If it's already an object
+            return tool.enabled === true;
+          }
+          return false;
+        })
+        .map(tool => {
+          if (typeof tool === 'string') {
+            const parsed = eval(`(${tool})`);
+            return parsed.id;
+          } else {
+            return tool.id;
+          }
+        }) || [];
+  
+      await functions.prepareSession(
+        currentSessionId, 
+        enabledToolIds, 
+        context?.threatModel, 
+        context?.diagram, 
+        processedThinkingBudget
+      );
+    } catch (error) {
+      console.error('Error preparing session:', error);
+    } finally {
+      // Always reset the flag when done (success or error)
+      preparingRef.current = false;
+    }
+  }, [functions, currentSessionId, tools, context?.threatModel, context?.diagram, processedThinkingBudget]);
+
+  // Call prepareSession when main parameters change
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      prepareSession();
+    }, 50);
+  
+    return () => clearTimeout(timer);
+  }, [prepareSession]);
+
+  // Debounced prepareSession call when user is typing
+  useEffect(() => {
+    // Clear existing timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    // Only debounce if there's a message (user is actually typing)
+    if (message.trim()) {
+      debounceTimerRef.current = setTimeout(() => {
+        prepareSession();
+      }, 500); // 500ms debounce delay
+    }
+
+    // Cleanup function
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [message, prepareSession]);
 
   // Initialize toggle states
   useEffect(() => {
@@ -55,10 +146,8 @@ const ChatInput = ({
     setDropdownStates(initialDropdownStates);
   }, [actionButtons]);
   
-
   // Handle click outside to close dropdowns
-// Modify the handleClickOutside useEffect
-useEffect(() => {
+  useEffect(() => {
     const handleClickOutside = (event) => {
       if (!activeDropdown) return;
   
@@ -193,7 +282,6 @@ useEffect(() => {
     }
   };
   
-
   const handleDropdownClick = (button, event) => {
     event.stopPropagation();
     
@@ -218,6 +306,15 @@ useEffect(() => {
     }
   }, [autoFocus, isStreaming]);
 
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
   const canSend = message.trim().length > 0 && !disabled && !isStreaming;
   const canStop = isStreaming && !disabled;
 
@@ -226,34 +323,32 @@ useEffect(() => {
     button => button.id === activeDropdown && dropdownStates[button.id]
   );
   
-
   return (
     <div className={`chat-input-wrapper ${effectiveTheme}`} ref={containerRef}>
       {/* Dropdown Content Area */}
       {activeDropdownButton && activeDropdownButton.dropdownContent && (
-  <div 
-    className="dropdown-content-container"
-    ref={(el) => dropdownRefs.current[activeDropdownButton.id] = el}
-  >
-    <div className="dropdown-content">
-      {typeof activeDropdownButton.dropdownContent === 'function' 
-        ? activeDropdownButton.dropdownContent({
-            message,
-            sessionId: currentSessionId,
-            isToggled: toggleStates[activeDropdownButton.id] || false, // Default to false for non-toggle buttons
-            onClose: () => {
-              setDropdownStates(prev => ({
-                ...prev,
-                [activeDropdownButton.id]: false
-              }));
-              setActiveDropdown(null);
+        <div 
+          className="dropdown-content-container"
+          ref={(el) => dropdownRefs.current[activeDropdownButton.id] = el}
+        >
+          <div className="dropdown-content">
+            {typeof activeDropdownButton.dropdownContent === 'function' 
+              ? activeDropdownButton.dropdownContent({
+                  message,
+                  sessionId: currentSessionId,
+                  isToggled: toggleStates[activeDropdownButton.id] || false, // Default to false for non-toggle buttons
+                  onClose: () => {
+                    setDropdownStates(prev => ({
+                      ...prev,
+                      [activeDropdownButton.id]: false
+                    }));
+                    setActiveDropdown(null);
+                  }
+                })
+              : activeDropdownButton.dropdownContent
             }
-          })
-        : activeDropdownButton.dropdownContent
-      }
-    </div>
-  </div>
-
+          </div>
+        </div>
       )}
       
       {/* Main Chat Input */}
@@ -270,59 +365,57 @@ useEffect(() => {
         />
         <div className="button-row">
           <div className="optional-buttons">
-{actionButtons.map((button, index) => {
-  const isToggled = button.isToggle && toggleStates[button.id];
-  const isDropdownOpen = dropdownStates[button.id];
-  
-  return (
-    <button
-      key={button.id || index}
-      ref={(el) => buttonRefs.current[button.id] = el}
-      className={`action-button ${button.isToggle ? 'toggle-button' : ''} ${isToggled ? 'toggled' : ''} ${isDropdownOpen ? 'dropdown-open' : ''}`}
-      onClick={() => handleToggleButton(button)}
-      disabled={button.disabled || disabled || isStreaming}
-      title={button.title}
-      data-theme={effectiveTheme}
-    >
-      <span className="button-main-content">
-        {button.icon && (
-          <span className="action-icon">{button.icon}</span>
-        )}
-        {button.label && <span className="button-label">{button.label}</span>}
-      </span>
-      
-      {/* Only show dropdown arrow for toggle buttons that are toggled on */}
-      {button.isToggle && isToggled && button.showDropdown && (
-        <>
-          <span className="button-separator"></span>
-          <span 
-            className="dropdown-arrow"
-            onClick={(e) => handleDropdownClick(button, e)}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{
-                transform: isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                transition: 'transform 0.2s ease'
-              }}
-            >
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </span>
-        </>
-      )}
-    </button>
-  );
-})}
-
-
+            {actionButtons.map((button, index) => {
+              const isToggled = button.isToggle && toggleStates[button.id];
+              const isDropdownOpen = dropdownStates[button.id];
+              
+              return (
+                <button
+                  key={button.id || index}
+                  ref={(el) => buttonRefs.current[button.id] = el}
+                  className={`action-button ${button.isToggle ? 'toggle-button' : ''} ${isToggled ? 'toggled' : ''} ${isDropdownOpen ? 'dropdown-open' : ''}`}
+                  onClick={() => handleToggleButton(button)}
+                  disabled={button.disabled || disabled || isStreaming}
+                  title={button.title}
+                  data-theme={effectiveTheme}
+                >
+                  <span className="button-main-content">
+                    {button.icon && (
+                      <span className="action-icon">{button.icon}</span>
+                    )}
+                    {button.label && <span className="button-label">{button.label}</span>}
+                  </span>
+                  
+                  {/* Only show dropdown arrow for toggle buttons that are toggled on */}
+                  {button.isToggle && isToggled && button.showDropdown && (
+                    <>
+                      <span className="button-separator"></span>
+                      <span 
+                        className="dropdown-arrow"
+                        onClick={(e) => handleDropdownClick(button, e)}
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="14"
+                          height="14"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          style={{
+                            transform: isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                            transition: 'transform 0.2s ease'
+                          }}
+                        >
+                          <path d="M6 9l6 6 6-6" />
+                        </svg>
+                      </span>
+                    </>
+                  )}
+                </button>
+              );
+            })}
           </div>
           
           {isStreaming ? (

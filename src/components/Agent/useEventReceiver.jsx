@@ -19,7 +19,7 @@ export const useEventReceiver = (eventTypes, targetId, onEventReceived) => {
     events
       .filter(event => 
         targetTypes.includes(event.type) && 
-        event.targetId === targetId // Only process events for this specific targetId
+        event.targetId === targetId
       )
       .forEach(event => {
         try {

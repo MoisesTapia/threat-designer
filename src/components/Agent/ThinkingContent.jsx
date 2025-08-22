@@ -4,10 +4,11 @@ import ThinkingComponent from "./ThinkingComponent";
 import { useTheme } from "../ThemeContext";
 import "./ThinkingContent.css";
 
-const ThinkingContent = ({ content, onToggle, thinkingLoading }) => {
-  const [expanded, setExpanded] = useState(true);
+const ThinkingContent = ({ content, onToggle, thinkingLoading, isParentFirstMount }) => {
+  const [expanded, setExpanded] = useState(isParentFirstMount || false);
   const [contentHeight, setContentHeight] = useState(0);
   const contentRef = useRef(null);
+  const wrapperRef = useRef(null);
   const resizeObserverRef = useRef(null);
   const { effectiveTheme } = useTheme();
 
@@ -17,86 +18,97 @@ const ThinkingContent = ({ content, onToggle, thinkingLoading }) => {
     onToggle?.(newState);
   }, [expanded, onToggle]);
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setExpanded((isParentFirstMount && !thinkingLoading) || (!isParentFirstMount && thinkingLoading === false));
+    }, 50);
+  
+    return () => clearTimeout(timer);
+  }, [thinkingLoading, isParentFirstMount]);
+
+
   const getTextColor = () => {
     return effectiveTheme === "light" ? "#706D6C" : "#8b8b8c";
   };
 
   const getLineColor = () => {
-    return effectiveTheme === "light" ? "#706D6C" : "#3a3a3a";
+    return effectiveTheme === "light" ? "#d0d0d0" : "#3a3a3a";
   };
 
   const calculateHeight = useCallback(() => {
-    if (contentRef.current) {
-      const element = contentRef.current;
-      const wrapper = element.querySelector('.thinking-content-wrapper');
-      if (wrapper) {
-        const height = wrapper.scrollHeight;
-        setContentHeight(height);
-      }
+    if (wrapperRef.current) {
+      // Get the actual content height including the 5px padding
+      const rect = wrapperRef.current.getBoundingClientRect();
+      const height = Math.ceil(rect.height);
+      
+      setContentHeight(height);
     }
   }, []);
 
   useEffect(() => {
-    if (contentRef.current) {
-      calculateHeight();
+    const measureHeight = () => {
+      requestAnimationFrame(() => {
+        calculateHeight();
+      });
+    };
 
-      if (window.ResizeObserver) {
-        resizeObserverRef.current = new ResizeObserver(() => {
-          calculateHeight();
-        });
-        resizeObserverRef.current.observe(contentRef.current);
-      }
+    measureHeight();
 
-      return () => {
-        if (resizeObserverRef.current) {
-          resizeObserverRef.current.disconnect();
-        }
-      };
+    if (wrapperRef.current && window.ResizeObserver) {
+      resizeObserverRef.current = new ResizeObserver(() => {
+        measureHeight();
+      });
+      resizeObserverRef.current.observe(wrapperRef.current);
     }
+
+    return () => {
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+      }
+    };
   }, [content, calculateHeight]);
 
   const generateLineElements = () => {
     if (!contentHeight) return null;
     
-    const dotSpacing = 120;
+    const dotSpacing = 110; // Balanced spacing
     const dotSize = 6;
-    const gapSize = 20;
-    const elements = [];
+    const gapSize = 18;
     
-    // Create a growing line container that clips content
-    elements.push(
+    const lineHeight = expanded ? contentHeight : 0;
+    
+    return (
       <div
-        key="line-mask"
-        className={`thinking-line-mask ${expanded ? 'expanded' : 'collapsed'}`}
+        className="thinking-line-mask"
         style={{
-          height: expanded ? `${contentHeight}px` : '0px',
+          height: `${lineHeight}px`,
         }}
       >
-        {/* For short content, just show a simple line */}
         {contentHeight < dotSpacing ? (
           <div
             className="thinking-line-segment-static"
             style={{
               position: 'absolute',
-              left: '5.5px',
-              width: '1px',
+              left: '5px',
+              width: '2px',
               top: '0px',
               height: `${contentHeight}px`,
               backgroundColor: getLineColor(),
+              opacity: expanded ? 1 : 0,
             }}
           />
         ) : (
           <>
-            {/* For longer content, create segments with dots */}
             {(() => {
               const numDots = Math.floor(contentHeight / dotSpacing);
               let currentTop = 0;
               const lineElements = [];
               
               for (let i = 0; i <= numDots; i++) {
-                const segmentHeight = i === 0 ? 
-                  (dotSpacing - gapSize/2) : 
-                  (i === numDots ? (contentHeight - currentTop) : (dotSpacing - gapSize));
+                const isLast = i === numDots;
+                const segmentHeight = isLast ? 
+                  (contentHeight - currentTop) : 
+                  (i === 0 ? dotSpacing - gapSize/2 : dotSpacing - gapSize);
                 
                 if (segmentHeight > 0) {
                   lineElements.push(
@@ -105,11 +117,12 @@ const ThinkingContent = ({ content, onToggle, thinkingLoading }) => {
                       className="thinking-line-segment-static"
                       style={{
                         position: 'absolute',
-                        left: '5.5px',
-                        width: '1px',
+                        left: '5px',
+                        width: '2px',
                         top: `${currentTop}px`,
                         height: `${segmentHeight}px`,
                         backgroundColor: getLineColor(),
+                        opacity: expanded ? 1 : 0,
                       }}
                     />
                   );
@@ -117,19 +130,20 @@ const ThinkingContent = ({ content, onToggle, thinkingLoading }) => {
                 
                 currentTop += segmentHeight;
                 
-                if (i < numDots) {
+                if (i < numDots && currentTop < contentHeight - 10) {
                   lineElements.push(
                     <div
                       key={`dot-${i}`}
                       className="thinking-line-dot-static"
                       style={{
                         position: 'absolute',
-                        left: '3px',
-                        width: '6px',
-                        height: '6px',
+                        left: '2px',
+                        width: `${dotSize}px`,
+                        height: `${dotSize}px`,
                         borderRadius: '50%',
                         top: `${currentTop + gapSize/2 - dotSize/2}px`,
                         backgroundColor: getLineColor(),
+                        opacity: expanded ? 1 : 0,
                       }}
                     />
                   );
@@ -143,8 +157,6 @@ const ThinkingContent = ({ content, onToggle, thinkingLoading }) => {
         )}
       </div>
     );
-    
-    return elements;
   };
 
   return (
@@ -154,18 +166,21 @@ const ThinkingContent = ({ content, onToggle, thinkingLoading }) => {
         onClick={handleToggle}
       />
       <div className="thinking-content-area">
-        <div className={`thinking-line-container ${expanded ? 'expanded' : 'collapsed'}`}>
+        <div className="thinking-line-container">
           {generateLineElements()}
         </div>
         <div
           ref={contentRef}
           className={`thinking-content-container ${expanded ? 'expanded' : 'collapsed'}`}
           style={{
-            color: getTextColor(),
-            maxHeight: expanded ? `${contentHeight + 16}px` : '0px', // +16 for padding
+            maxHeight: expanded ? `${contentHeight}px` : '0',
           }}
         >
-          <div className="thinking-content-wrapper">
+          <div 
+            ref={wrapperRef}
+            className="thinking-content-wrapper"
+            style={{ color: getTextColor() }}
+          >
             <TextContent content={content} />
           </div>
         </div>

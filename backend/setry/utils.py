@@ -9,7 +9,7 @@ import boto3
 from botocore.config import Config
 import hashlib
 from typing import Dict, Any, List
-from langgraph.prebuilt import create_react_agent
+from graph import create_react_agent
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_aws import ChatBedrockConverse
 from prompt import system_prompt

@@ -1,24 +1,21 @@
 import React from "react";
 import TextContent from "./TextContent";
 import ThinkingContent from "./ThinkingContent";
-import ThreatModelTool from "./ThreatModelTool";
+import ToolContent from "./ToolContent";
+import ThreatModelingTools from "./ThreatModelingTools";
 
-const ContentResolver = React.memo(({ msg, type, isBlockComplete }) => {
+
+const ContentResolver = React.memo(({ msg, type, isBlockComplete, isParentFirstMount }) => {
+
   switch (type) {
     case "tool":
       return (
-        // <ThreatModelTool loading={msg.isComplete} text={msg.toolName} />
-        <ThreatModelTool 
-        state={"loading"}
-        onExpand={(expanded) => console.log('Expanded:', expanded)}
-        text={"Adding new threat"}
-        expanded={true}
-        />
+        <ThreatModelingTools toolName={msg.toolName} content={msg.content} toolStart={!msg.isComplete} error={msg.error} isParentFirstMount={isParentFirstMount}/>
       );
     case "text":
       return <TextContent content={msg.content} />;
     case "thinking":
-      return <ThinkingContent content={msg.content} thinkingLoading={!isBlockComplete} />;
+      return <ThinkingContent content={msg.content} thinkingLoading={isBlockComplete} isParentFirstMount={isParentFirstMount}/>;
     default:
       return null;
   }

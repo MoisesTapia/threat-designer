@@ -3,7 +3,7 @@ import ChatTurn from './ChatTurn';
 import React, {memo} from 'react';
 
 
-const ChatContent = memo(({ chatTurns, streaming, user, scroll}) => {
+const ChatContent = memo(({ chatTurns, streaming, user, scroll, isParentFirstMount}) => {
   return (
     <>
       {chatTurns.map((turn, index) => {
@@ -17,6 +17,7 @@ const ChatContent = memo(({ chatTurns, streaming, user, scroll}) => {
             streaming={streaming && isLast}
             isLast={isLast}
             scroll={scroll}
+            isParentFirstMount={isParentFirstMount}
           />
         );
       })}

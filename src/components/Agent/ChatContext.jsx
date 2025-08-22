@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useCallback, useRef, useEff
 import { eventBus } from './eventBus';
 import { fetchAuthSession } from "aws-amplify/auth";
 
-
 const getAuthToken = async () => {
   try {
     const session = await fetchAuthSession();
@@ -13,31 +12,18 @@ const getAuthToken = async () => {
   }
 };
 
-const BUFFER_DELAY_MS = 5;
+const BUFFER_DELAY_MS = 20;
 
-export const ChatSessionContext = createContext(null);
+// Split contexts
+export const ChatSessionFunctionsContext = createContext(null);
+export const ChatSessionDataContext = createContext(null);
 
-export const useChatSession = (sessionId) => {
-  // Get the auth session and token
-  const context = useContext(ChatSessionContext);
-  if (!context) {
-    throw new Error('useChatSession must be used within a ChatSessionProvider');
-  }
-  
-  // Initialize session when hook is first used
-  useEffect(() => {
-    context.initializeSession(sessionId);
-  }, [context, sessionId]);
-
-  return context.getSession(sessionId);
-};
-
-// Replace the current endpoint constants with:
+// Replace the current endpoint constants
 const API_ENDPOINT = 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A541020177866%3Aruntime%2Fagent-UUfBGsBktn/invocations?qualifier=DEFAULT';
 const TOOLS_ENDPOINT = 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A541020177866%3Aruntime%2Fagent-UUfBGsBktn/invocations?qualifier=DEFAULT'; 
 const SESSION_HISTORY_ENDPOINT = '/invocations';
-const SESSION_PREPARE_ENDPOINT = '/invocations';
-const SESSION_CLEAR_ENDPOINT = '/invocations'; // For future clear functionality
+const SESSION_PREPARE_ENDPOINT = 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A541020177866%3Aruntime%2Fagent-UUfBGsBktn/invocations?qualifier=DEFAULT';
+const SESSION_CLEAR_ENDPOINT = '/invocations';
 const PING_ENDPOINT = 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A541020177866%3Aruntime%2Fagent-UUfBGsBktn/invocations?qualifier=DEFAULT'; 
 
 // Helper functions for interrupt detection
@@ -60,400 +46,412 @@ const checkForInterruptInChatTurns = (chatTurns) => {
 
 export const ChatSessionProvider = ({ children }) => {
   const [sessions, setSessions] = useState(new Map());
-  const sessionRefs = useRef(new Map());
   const [loadingStates, setLoadingStates] = useState(new Map());
+  const [availableTools, setAvailableTools] = useState([]);
+  const [toolsLoading, setToolsLoading] = useState(true);
+  const [toolsError, setToolsError] = useState(null);
+  
+  // Refs for stable data
+  const sessionsRef = useRef(new Map());
+  const sessionRefs = useRef(new Map());
   const initializedSessions = useRef(new Set());
   const initializingPromises = useRef(new Map());
   const sessionLastAccess = useRef(new Map());
   const cleanupInterval = useRef(null);
-  
-  // Available tools state - shared across all sessions
-  const [availableTools, setAvailableTools] = useState([]);
-  const [toolsLoading, setToolsLoading] = useState(true);
-  const [toolsError, setToolsError] = useState(null);
   const toolsFetched = useRef(false);
 
   // Configuration
-  const SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 30 minutes
-  const MAX_SESSIONS = 50; // Maximum sessions to keep in memory
-  const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
+  const SESSION_TIMEOUT_MS = 60 * 60 * 1000;
+  const MAX_SESSIONS = 50;
+  const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
-  // Event emission for interrupts
-  const emitInterruptEvent = useCallback((sessionId, interruptMessage, source = 'unknown') => {
-    eventBus.emit(
-      'CHAT_INTERRUPT',
-      {
+  // Update sessionsRef whenever sessions state changes
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
+  // Create stable functions that don't depend on state directly
+  const stableFunctions = useMemo(() => {
+    // Event emission for interrupts
+    const emitInterruptEvent = (sessionId, interruptMessage, source = 'unknown') => {
+      eventBus.emit(
+        'CHAT_INTERRUPT',
+        {
+          sessionId,
+          interruptMessage,
+          source,
+          timestamp: Date.now()
+        },
         sessionId,
-        interruptMessage,
-        source, // 'memory' or 'sse'
-        timestamp: Date.now()
-      },
-      sessionId, // targetId is the sessionId
-      `interrupt_${sessionId}_${Date.now()}`
-    );
-  }, []);
+        `interrupt_${sessionId}_${Date.now()}`
+      );
+    };
 
-  const updateSession = useCallback((sessionId, updates) => {
-    setSessions(prev => {
-      const newSessions = new Map(prev);
-      const currentSession = newSessions.get(sessionId);
-      if (currentSession) {
-        newSessions.set(sessionId, { ...currentSession, ...updates });
-      }
-      return newSessions;
-    });
-  }, []);
-
-  // Fetch available tools - called once on mount
-  const fetchAvailableTools = useCallback(async (sessionId) => {
-    if (toolsFetched.current) return;
-    const token = await getAuthToken();
-  
-    setToolsLoading(true);
-    setToolsError(null);
-  
-    try {
-      const response = await fetch(TOOLS_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId
-        },
-        body: JSON.stringify({
-          input: {
-            type: 'tools'
-          }
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch tools: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      setAvailableTools(data.available_tools || []);
-      toolsFetched.current = true;
-    } catch (error) {
-      console.error('Failed to fetch available tools:', error);
-      setToolsError(error.message || 'Failed to load tools');
-      setAvailableTools([]);
-    } finally {
-      setToolsLoading(false);
-    }
-  }, []);
-
-
-  const prepareSession = useCallback(async (sessionId, toolPreferences = null, context = null, diagramPath = null) => {
-    try {
-      const requestBody = {
-        input: {
-          type: 'prepare'
+    // Update session using callback pattern
+    const updateSession = (sessionId, updates) => {
+      setSessions(prev => {
+        const newSessions = new Map(prev);
+        const currentSession = newSessions.get(sessionId);
+        if (currentSession) {
+          newSessions.set(sessionId, { ...currentSession, ...updates });
         }
-      };
-  
-      // Add optional parameters if provided
-      if (toolPreferences) {
-        requestBody.input.tool_preferences = toolPreferences;
-      }
-      if (context) {
-        requestBody.input.context = context;
-      }
-      if (diagramPath) {
-        requestBody.input.diagram_path = diagramPath;
-      }
-  
-      const response = await fetch(SESSION_PREPARE_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
-        },
-        body: JSON.stringify(requestBody),
+        return newSessions;
       });
-  
-      if (!response.ok) {
-        throw new Error(`Failed to prepare session: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      return data;
-    } catch (error) {
-      console.error(`Failed to prepare session ${sessionId}:`, error);
-      throw error;
-    }
-  }, []);
+    };
 
-  const clearSession = useCallback(async (sessionId) => {
-    try {
-      const response = await fetch(SESSION_CLEAR_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
-        },
-        body: JSON.stringify({
+    // Fetch available tools
+    const fetchAvailableTools = async (sessionId) => {
+      if (toolsFetched.current) return;
+      const token = await getAuthToken();
+    
+      setToolsLoading(true);
+      setToolsError(null);
+    
+      try {
+        const response = await fetch(TOOLS_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId
+          },
+          body: JSON.stringify({
+            input: {
+              type: 'tools'
+            }
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch tools: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        setAvailableTools(data.available_tools || []);
+        toolsFetched.current = true;
+      } catch (error) {
+        console.error('Failed to fetch available tools:', error);
+        setToolsError(error.message || 'Failed to load tools');
+        setAvailableTools([]);
+      } finally {
+        setToolsLoading(false);
+      }
+    };
+
+    // Prepare session
+    const prepareSession = async (sessionId, toolPreferences = null, context = null, diagramPath = null, thinking = 0) => {
+      try {
+        const token = await getAuthToken();
+
+        const requestBody = {
           input: {
-            type: 'clear'
+            type: 'prepare',
+            budget_level: thinking
           }
-        }),
-      });
-  
-      if (!response.ok) {
-        throw new Error(`Failed to clear session: ${response.status}`);
+        };
+    
+        if (toolPreferences) {
+          requestBody.input.tool_preferences = toolPreferences;
+        }
+        if (context) {
+          requestBody.input.context = context;
+        }
+        if (diagramPath) {
+          requestBody.input.diagram = diagramPath;
+        }
+    
+        const response = await fetch(SESSION_PREPARE_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
+          },
+          body: JSON.stringify(requestBody),
+        });
+    
+        if (!response.ok) {
+          throw new Error(`Failed to prepare session: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        console.error(`Failed to prepare session ${sessionId}:`, error);
+        throw error;
       }
-      
-      const data = await response.json();
-      
-      // Update local state to reflect cleared session
-      updateSession(sessionId, { 
-        chatTurns: [], 
-        error: null,
-        context: { diagram: null, threatModel: null }
-      });
-      
-      return data;
-    } catch (error) {
-      console.error(`Failed to clear session ${sessionId}:`, error);
-      throw error;
-    }
-  }, [updateSession]);
+    };
 
-
-  // Update last access time for a session
-  const updateLastAccess = useCallback((sessionId) => {
-    sessionLastAccess.current.set(sessionId, Date.now());
-  }, []);
-
-  // Update loading state for a session
-  const setSessionLoading = useCallback((sessionId, isLoading) => {
-    setLoadingStates(prev => {
-      const newStates = new Map(prev);
-      if (isLoading) {
-        newStates.set(sessionId, true);
-      } else {
-        newStates.delete(sessionId);
+    // Clear session
+    const clearSession = async (sessionId) => {
+      try {
+        const response = await fetch(SESSION_CLEAR_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
+          },
+          body: JSON.stringify({
+            input: {
+              type: 'clear'
+            }
+          }),
+        });
+    
+        if (!response.ok) {
+          throw new Error(`Failed to clear session: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        updateSession(sessionId, { 
+          chatTurns: [], 
+          error: null,
+          context: { diagram: null, threatModel: null }
+        });
+        
+        return data;
+      } catch (error) {
+        console.error(`Failed to clear session ${sessionId}:`, error);
+        throw error;
       }
-      return newStates;
-    });
-  }, []);
+    };
 
-  // Fetch session history from backend
-  const fetchSessionHistory = async (sessionId) => {
-    try {
-      const response = await fetch(`${SESSION_HISTORY_ENDPOINT}/${sessionId}/history`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+    // Update last access time
+    const updateLastAccess = (sessionId) => {
+      sessionLastAccess.current.set(sessionId, Date.now());
+    };
+
+    // Set loading state
+    const setSessionLoading = (sessionId, isLoading) => {
+      setLoadingStates(prev => {
+        const newStates = new Map(prev);
+        if (isLoading) {
+          newStates.set(sessionId, true);
+        } else {
+          newStates.delete(sessionId);
+        }
+        return newStates;
       });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch history: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      return data.chatTurns || [];
-    } catch (error) {
-      console.warn(`Failed to fetch session ${sessionId} history:`, error);
-      return null;
-    }
-  };
+    };
 
-  // Set session context
-  const setSessionContext = useCallback(async (sessionId, context) => {
-    // Validate context structure
-    if (context && typeof context === 'object') {
-      // Allow partial updates - merge with existing context
+    // Fetch session history
+    const fetchSessionHistory = async (sessionId) => {
+      try {
+        const response = await fetch(`${SESSION_HISTORY_ENDPOINT}/${sessionId}/history`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch history: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        return data.chatTurns || [];
+      } catch (error) {
+        console.warn(`Failed to fetch session ${sessionId} history:`, error);
+        return null;
+      }
+    };
+
+    // Set session context
+    const setSessionContext = async (sessionId, context) => {
+      if (context && typeof context === 'object') {
+        setSessions(prev => {
+          const newSessions = new Map(prev);
+          const session = newSessions.get(sessionId);
+          
+          if (session) {
+            const updatedContext = {
+              ...session.context,
+              ...context
+            };
+            newSessions.set(sessionId, {
+              ...session,
+              context: updatedContext
+            });
+          }
+          return newSessions;
+        });
+        
+        updateLastAccess(sessionId);
+      }
+    };
+
+    // Clear session context
+    const clearSessionContext = async (sessionId) => {
       setSessions(prev => {
         const newSessions = new Map(prev);
         const session = newSessions.get(sessionId);
         
         if (session) {
-          const updatedContext = {
-            ...session.context,
-            ...context
-          };
           newSessions.set(sessionId, {
             ...session,
-            context: updatedContext
+            context: {
+              diagram: null,
+              threatModel: null
+            }
           });
         }
-        else {
-        }
+        
         return newSessions;
       });
       
       updateLastAccess(sessionId);
-    }
-  }, [updateLastAccess]);
+    };
 
-  // Clear session context
-  const clearSessionContext = useCallback(async (sessionId) => {
-    setSessions(prev => {
-      const newSessions = new Map(prev);
-      const session = newSessions.get(sessionId);
+    // Get session context (uses ref)
+    const getSessionContext = (sessionId) => {
+      const session = sessionsRef.current.get(sessionId);
+      return session?.context || { diagram: null, threatModel: null };
+    };
+
+    // Remove session
+    const removeSession = (sessionId) => {
+      setSessions(prev => {
+        const newSessions = new Map(prev);
+        newSessions.delete(sessionId);
+        return newSessions;
+      });
       
-      if (session) {
-        newSessions.set(sessionId, {
-          ...session,
-          context: {
-            diagram: null,
-            threatModel: null
-          }
-        });
-        
-        // Async save to backend (fire and forget)
-        // saveSessionContext(sessionId, null);
-      }
+      setLoadingStates(prev => {
+        const newStates = new Map(prev);
+        newStates.delete(sessionId);
+        return newStates;
+      });
       
-      return newSessions;
-    });
-    
-    updateLastAccess(sessionId);
-  }, [updateLastAccess]);
-
-  // Get session context
-  const getSessionContext = useCallback((sessionId) => {
-    const session = sessions.get(sessionId);
-    return session?.context || { diagram: null, threatModel: null };
-  }, [sessions]);
-
-  // Remove session from memory
-  const removeSession = useCallback((sessionId) => {
-    setSessions(prev => {
-      const newSessions = new Map(prev);
-      newSessions.delete(sessionId);
-      return newSessions;
-    });
-    
-    setLoadingStates(prev => {
-      const newStates = new Map(prev);
-      newStates.delete(sessionId);
-      return newStates;
-    });
-    
-    // Clean up refs
-    const refs = sessionRefs.current.get(sessionId);
-    if (refs) {
-      if (refs.eventSource) {
-        refs.eventSource.close();
-      }
-      if (refs.bufferTimeout) {
-        clearTimeout(refs.bufferTimeout);
-      }
-      sessionRefs.current.delete(sessionId);
-    }
-    
-    // Clean up tracking
-    initializedSessions.current.delete(sessionId);
-    sessionLastAccess.current.delete(sessionId);
-    initializingPromises.current.delete(sessionId);
-    
-    console.log(`Session ${sessionId} removed from memory`);
-  }, []);
-
-  // Clean up old/unused sessions
-  const cleanupOldSessions = useCallback(() => {
-    const now = Date.now();
-    const sessionsToRemove = [];
-    
-    // Find sessions that haven't been accessed recently
-    sessionLastAccess.current.forEach((lastAccess, sessionId) => {
-      if (now - lastAccess > SESSION_TIMEOUT_MS) {
-        // Don't remove if currently streaming
-        const session = sessions.get(sessionId);
-        if (!session?.isStreaming) {
-          sessionsToRemove.push(sessionId);
+      const refs = sessionRefs.current.get(sessionId);
+      if (refs) {
+        if (refs.eventSource) {
+          refs.eventSource.close();
         }
+        if (refs.bufferTimeout) {
+          clearTimeout(refs.bufferTimeout);
+        }
+        sessionRefs.current.delete(sessionId);
       }
-    });
-    
-    // If we have too many sessions, remove the oldest ones
-    if (sessions.size > MAX_SESSIONS) {
-      const sortedSessions = Array.from(sessionLastAccess.current.entries())
-        .sort((a, b) => a[1] - b[1]) // Sort by last access time
-        .slice(0, sessions.size - MAX_SESSIONS)
-        .map(entry => entry[0]);
       
-      sessionsToRemove.push(...sortedSessions);
-    }
-    
-    // Remove duplicate session IDs
-    const uniqueSessionsToRemove = [...new Set(sessionsToRemove)];
-    
-    if (uniqueSessionsToRemove.length > 0) {
-      console.log(`Cleaning up ${uniqueSessionsToRemove.length} old sessions:`, uniqueSessionsToRemove);
-      uniqueSessionsToRemove.forEach(removeSession);
-    }
-  }, [sessions, removeSession]);
+      initializedSessions.current.delete(sessionId);
+      sessionLastAccess.current.delete(sessionId);
+      initializingPromises.current.delete(sessionId);
+      
+      console.log(`Session ${sessionId} removed from memory`);
+    };
 
-  // Initialize session with backend check
-  const initializeSession = useCallback(async (sessionId, forceCheck = false) => {
-    // Prevent duplicate initialization requests
-    if (!forceCheck && initializingPromises.current.has(sessionId)) {
-      return initializingPromises.current.get(sessionId);
-    }
+    // Clean up old sessions
+    const cleanupOldSessions = () => {
+      const now = Date.now();
+      const sessionsToRemove = [];
+      
+      sessionLastAccess.current.forEach((lastAccess, sessionId) => {
+        if (now - lastAccess > SESSION_TIMEOUT_MS) {
+          const session = sessionsRef.current.get(sessionId);
+          if (!session?.isStreaming) {
+            sessionsToRemove.push(sessionId);
+          }
+        }
+      });
+      
+      if (sessionsRef.current.size > MAX_SESSIONS) {
+        const sortedSessions = Array.from(sessionLastAccess.current.entries())
+          .sort((a, b) => a[1] - b[1])
+          .slice(0, sessionsRef.current.size - MAX_SESSIONS)
+          .map(entry => entry[0]);
+        
+        sessionsToRemove.push(...sortedSessions);
+      }
+      
+      const uniqueSessionsToRemove = [...new Set(sessionsToRemove)];
+      
+      if (uniqueSessionsToRemove.length > 0) {
+        console.log(`Cleaning up ${uniqueSessionsToRemove.length} old sessions:`, uniqueSessionsToRemove);
+        uniqueSessionsToRemove.forEach(removeSession);
+      }
+    };
 
-    if (!toolsFetched.current) {
-      await fetchAvailableTools(sessionId);
-    }
-  
+    // Initialize session
+    const initializeSession = async (sessionId, forceCheck = false) => {
+      if (!forceCheck && initializingPromises.current.has(sessionId)) {
+        return initializingPromises.current.get(sessionId);
+      }
 
-    // Check if already initialized in this app lifecycle
-    if (!forceCheck && initializedSessions.current.has(sessionId)) {
-      return;
-    }
+      if (!toolsFetched.current) {
+        await fetchAvailableTools(sessionId);
+      }
 
-    // Check if session already exists in state with data
-    setSessions(currentSessions => {
-      const existingSession = currentSessions.get(sessionId);
+      if (!forceCheck && initializedSessions.current.has(sessionId)) {
+        return;
+      }
+
+      const existingSession = sessionsRef.current.get(sessionId);
       if (!forceCheck && existingSession && existingSession.chatTurns.length > 0) {
         initializedSessions.current.add(sessionId);
-        return currentSessions;
+        return;
       }
-      return currentSessions;
-    });
 
-    // If already marked as initialized, return
-    if (!forceCheck && initializedSessions.current.has(sessionId)) {
-      return;
-    }
+      const initPromise = (async () => {
+        try {
+          setSessionLoading(sessionId, true);
 
-    // Create initialization promise
-    const initPromise = (async () => {
-      try {
-        // Set loading state
-        setSessionLoading(sessionId, true);
+          const chatTurns = await fetchSessionHistory(sessionId);
+          
+          if (chatTurns !== null) {
+            setSessions(prev => {
+              const newSessions = new Map(prev);
+              newSessions.set(sessionId, {
+                id: sessionId,
+                chatTurns: chatTurns,
+                isStreaming: false,
+                error: null,
+                restoredFromBackend: true,
+                context: { diagram: null, threatModel: null },
+              });
+              return newSessions;
+            });
 
-        // Fetch session history and context in parallel
-        const [chatTurns, context] = await Promise.all([
-          fetchSessionHistory(sessionId),
-        ]);
-        
-        if (chatTurns !== null) {
-          // Successfully fetched history
+            const interruptMessage = checkForInterruptInChatTurns(chatTurns);
+            if (interruptMessage) {
+              console.log(`Interrupt found in session ${sessionId} loaded from memory:`, interruptMessage);
+              emitInterruptEvent(sessionId, interruptMessage, 'memory');
+            }
+            
+            if (!sessionRefs.current.has(sessionId)) {
+              sessionRefs.current.set(sessionId, {
+                eventSource: null,
+                buffer: [],
+                bufferTimeout: null,
+              });
+            }
+            
+            initializedSessions.current.add(sessionId);
+            updateLastAccess(sessionId);
+            setSessionLoading(sessionId, false);
+            return;
+          }
+
           setSessions(prev => {
-            const newSessions = new Map(prev);
-            newSessions.set(sessionId, {
+            const existingSession = prev.get(sessionId);
+            if (existingSession && existingSession.chatTurns.length > 0) {
+              return prev;
+            }
+            
+            const newSession = {
               id: sessionId,
-              chatTurns: chatTurns,
+              chatTurns: [],
               isStreaming: false,
               error: null,
-              restoredFromBackend: true,
+              restoredFromBackend: false,
               context: { diagram: null, threatModel: null },
-            });
+            };
+            
+            const newSessions = new Map(prev);
+            newSessions.set(sessionId, newSession);
             return newSessions;
           });
 
-          // Check for interrupt in the loaded chat turns (only if it's the last item)
-          const interruptMessage = checkForInterruptInChatTurns(chatTurns);
-          if (interruptMessage) {
-            console.log(`Interrupt found in session ${sessionId} loaded from memory:`, interruptMessage);
-            emitInterruptEvent(sessionId, interruptMessage, 'memory');
-          }
-          
-          // Initialize refs for this session
           if (!sessionRefs.current.has(sessionId)) {
             sessionRefs.current.set(sessionId, {
               eventSource: null,
@@ -465,136 +463,63 @@ export const ChatSessionProvider = ({ children }) => {
           initializedSessions.current.add(sessionId);
           updateLastAccess(sessionId);
           setSessionLoading(sessionId, false);
-          return;
-        }
 
-        // Fallback: Create new session if backend check fails or session doesn't exist
-        setSessions(prev => {
-          const existingSession = prev.get(sessionId);
-          if (existingSession && existingSession.chatTurns.length > 0) {
-            return prev; // Don't overwrite existing session with data
-          }
+        } catch (error) {
+          console.error(`Error initializing session ${sessionId}:`, error);
+          setSessionLoading(sessionId, false);
           
-          const newSession = {
-            id: sessionId,
-            chatTurns: [],
-            isStreaming: false,
-            error: null,
-            restoredFromBackend: false,
-            context: { diagram: null, threatModel: null },
-          };
-          
-          const newSessions = new Map(prev);
-          newSessions.set(sessionId, newSession);
-          return newSessions;
-        });
-
-        // Initialize refs for this session
-        if (!sessionRefs.current.has(sessionId)) {
-          sessionRefs.current.set(sessionId, {
-            eventSource: null,
-            buffer: [],
-            bufferTimeout: null,
+          setSessions(prev => {
+            if (prev.has(sessionId)) return prev;
+            
+            const newSessions = new Map(prev);
+            newSessions.set(sessionId, {
+              id: sessionId,
+              chatTurns: [],
+              isStreaming: false,
+              error: null,
+              restoredFromBackend: false,
+              context: { diagram: null, threatModel: null },
+            });
+            return newSessions;
           });
-        }
-        
-        initializedSessions.current.add(sessionId);
-        updateLastAccess(sessionId);
-        setSessionLoading(sessionId, false);
-
-      } catch (error) {
-        console.error(`Error initializing session ${sessionId}:`, error);
-        setSessionLoading(sessionId, false);
-        
-        // Create fallback session on error
-        setSessions(prev => {
-          if (prev.has(sessionId)) return prev;
           
-          const newSessions = new Map(prev);
-          newSessions.set(sessionId, {
-            id: sessionId,
-            chatTurns: [],
-            isStreaming: false,
-            error: null,
-            restoredFromBackend: false,
-            context: { diagram: null, threatModel: null },
-          });
-          return newSessions;
+          initializedSessions.current.add(sessionId);
+          updateLastAccess(sessionId);
+        } finally {
+          initializingPromises.current.delete(sessionId);
+        }
+      })();
+
+      initializingPromises.current.set(sessionId, initPromise);
+      
+      return initPromise;
+    };
+
+    // Get session refs
+    const getSessionRefs = (sessionId) => {
+      if (!sessionRefs.current.has(sessionId)) {
+        sessionRefs.current.set(sessionId, {
+          eventSource: null,
+          buffer: [],
+          bufferTimeout: null,
         });
-        
-        initializedSessions.current.add(sessionId);
-        updateLastAccess(sessionId);
-      } finally {
-        // Clean up the promise reference
-        initializingPromises.current.delete(sessionId);
       }
-    })();
+      return sessionRefs.current.get(sessionId);
+    };
 
-    // Store the promise to prevent duplicate requests
-    initializingPromises.current.set(sessionId, initPromise);
-    
-    return initPromise;
-  }, [setSessionLoading, updateLastAccess, emitInterruptEvent]);
+    // Dismiss error
+    const dismissError = (sessionId) => {
+      updateSession(sessionId, { error: null });
+    };
 
-  // Get session-specific refs
-  const getSessionRefs = useCallback((sessionId) => {
-    if (!sessionRefs.current.has(sessionId)) {
-      sessionRefs.current.set(sessionId, {
-        eventSource: null,
-        buffer: [],
-        bufferTimeout: null,
-      });
-    }
-    return sessionRefs.current.get(sessionId);
-  }, []);
-
-
-  // Dismiss error for a specific session
-  const dismissError = useCallback((sessionId) => {
-    updateSession(sessionId, { error: null });
-  }, [updateSession]);
-
-  // Session-specific buffer management
-  const flushBuffer = useCallback((sessionId) => {
-    const refs = getSessionRefs(sessionId);
-    if (!refs.buffer || refs.buffer.length === 0) return;
-    
-    const bufferedMessages = [...refs.buffer];
-    refs.buffer = [];
-    
-    setSessions(prev => {
-      const newSessions = new Map(prev);
-      const session = newSessions.get(sessionId);
-      if (session && session.chatTurns.length > 0) {
-        const updatedTurns = [...session.chatTurns];
-        const lastTurnIndex = updatedTurns.length - 1;
-        updatedTurns[lastTurnIndex] = {
-          ...updatedTurns[lastTurnIndex],
-          aiMessage: [...updatedTurns[lastTurnIndex].aiMessage, ...bufferedMessages]
-        };
-        newSessions.set(sessionId, { ...session, chatTurns: updatedTurns });
-      }
-      return newSessions;
-    });
-  }, [getSessionRefs]);
-
-  // Session-specific message adding
-  const addAiMessage = useCallback((sessionId, message) => {
-    const refs = getSessionRefs(sessionId);
-    const messageType = message.type || 'text';
-    
-    if (messageType === 'text' || messageType === 'think') {
-      refs.buffer = refs.buffer || [];
-      refs.buffer.push(message);
+    // Flush buffer
+    const flushBuffer = (sessionId) => {
+      const refs = getSessionRefs(sessionId);
+      if (!refs.buffer || refs.buffer.length === 0) return;
       
-      if (refs.bufferTimeout) {
-        clearTimeout(refs.bufferTimeout);
-      }
+      const bufferedMessages = [...refs.buffer];
+      refs.buffer = [];
       
-      refs.bufferTimeout = setTimeout(() => {
-        flushBuffer(sessionId);
-      }, BUFFER_DELAY_MS);
-    } else {
       setSessions(prev => {
         const newSessions = new Map(prev);
         const session = newSessions.get(sessionId);
@@ -603,238 +528,269 @@ export const ChatSessionProvider = ({ children }) => {
           const lastTurnIndex = updatedTurns.length - 1;
           updatedTurns[lastTurnIndex] = {
             ...updatedTurns[lastTurnIndex],
-            aiMessage: [...updatedTurns[lastTurnIndex].aiMessage, message]
+            aiMessage: [...updatedTurns[lastTurnIndex].aiMessage, ...bufferedMessages]
           };
           newSessions.set(sessionId, { ...session, chatTurns: updatedTurns });
         }
         return newSessions;
       });
-    }
-  }, [getSessionRefs, flushBuffer]);
+    };
 
-  // Session-specific cleanup
-  const cleanupSSE = useCallback((sessionId) => {
+    // Add AI message
+// Add AI message - FIXED VERSION
+  const addAiMessage = (sessionId, message) => {
     const refs = getSessionRefs(sessionId);
     
-    if (refs.eventSource) {
-      refs.eventSource.close();
-      refs.eventSource = null;
-    }
+    // Buffer ALL message types to maintain order
+    refs.buffer = refs.buffer || [];
+    refs.buffer.push(message);
     
     if (refs.bufferTimeout) {
       clearTimeout(refs.bufferTimeout);
-      flushBuffer(sessionId);
     }
     
-    updateSession(sessionId, { isStreaming: false });
-  }, [getSessionRefs, flushBuffer, updateSession]);
+    // For non-text messages, use a much shorter delay to maintain responsiveness
+    // but still preserve order
+    const messageType = message.type || 'text';
+    const delay = (messageType === 'text' || messageType === 'think') ? BUFFER_DELAY_MS : 5; // 5ms for tools/other types
+    
+    refs.bufferTimeout = setTimeout(() => {
+      flushBuffer(sessionId);
+    }, delay);
+  };
 
-  // Session-specific send message
-  const sendMessage = useCallback(async (sessionId, userMessage) => {
-    if (!userMessage.trim()) return;
-  
-    updateLastAccess(sessionId);
-    const currentSession = await sessions.get(sessionId);
-    if (!currentSession) {
-      console.warn(`Session ${sessionId} not ready yet`);
-      return;
-    }
-  
-    if (currentSession.isStreaming) return;
-  
-    cleanupSSE(sessionId);
-
-      // FIX: Generate a unique turn ID
-  const turnId = `turn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  // Or you could use: const turnId = crypto.randomUUID();
-  
-    const newTurn = {
-      id: turnId,
-      userMessage: userMessage,
-      aiMessage: []
+    // Cleanup SSE
+    const cleanupSSE = (sessionId) => {
+      const refs = getSessionRefs(sessionId);
+      
+      if (refs.eventSource) {
+        refs.eventSource.close();
+        refs.eventSource = null;
+      }
+      
+      if (refs.bufferTimeout) {
+        clearTimeout(refs.bufferTimeout);
+        flushBuffer(sessionId);
+      }
+      
+      updateSession(sessionId, { isStreaming: false });
     };
-  
-    setSessions(prev => {
-      const newSessions = new Map(prev);
-      const session = newSessions.get(sessionId);
-      
-      if (!session) {
-        console.warn(`Session ${sessionId} not found when sending message`);
-        return prev;
+
+    // Send message
+    const sendMessage = async (sessionId, userMessage, interrupt = false, interruptResponse = null) => {
+      console.log(interruptResponse);
+      if (!userMessage.trim()) {
+        return;
       }
-      
-      newSessions.set(sessionId, {
-        ...session,
-        chatTurns: [...session.chatTurns, newTurn],
-        isStreaming: true,
-        error: null
-      });
-      
-      return newSessions;
-    });
-  
-    try {
-      const requestBody = {
-        input: {
-          prompt: userMessage
+    
+      updateLastAccess(sessionId);
+      const currentSession = sessionsRef.current.get(sessionId);
+      if (!currentSession) {
+        console.warn(`Session ${sessionId} not ready yet`);
+        return;
+      }
+    
+      // Only block regular messages if streaming, allow interrupts to proceed
+      if (!interrupt && currentSession.isStreaming) return;
+    
+      // For regular messages (not interrupts), clean up SSE and update session state
+      if (!interrupt) {
+        cleanupSSE(sessionId);
+    
+        const turnId = `turn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+        const newTurn = {
+          id: turnId,
+          userMessage: userMessage,
+          aiMessage: []
+        };
+    
+        setSessions(prev => {
+          const newSessions = new Map(prev);
+          const session = newSessions.get(sessionId);
+          
+          if (!session) {
+            console.warn(`Session ${sessionId} not found when sending message`);
+            return prev;
+          }
+          
+          newSessions.set(sessionId, {
+            ...session,
+            chatTurns: [...session.chatTurns, newTurn],
+            isStreaming: true,
+            error: null
+          });
+          
+          return newSessions;
+        });
+      }
+    
+      try {
+        let requestBody;
+        
+        if (interrupt && interruptResponse) {
+          // Interrupt response payload
+          requestBody = {
+            input: {
+              prompt: interruptResponse,
+              type: "resume_interrupt"
+            }
+          };
+        } else {
+          // Regular message payload
+          requestBody = {
+            input: {
+              prompt: userMessage
+            }
+          };
         }
-      };
-      const token = await getAuthToken();
-      
-      const response = await fetch(API_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
-        },
-        body: JSON.stringify(requestBody),
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Request failed (${response.status}): ${errorText || 'Unknown error'}`);
-      }
-      
-      // Handle streaming response from backend
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
         
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        const token = await getAuthToken();
         
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              
-              if (data.type === 'interrupt') {
-                console.log(`Interrupt received for session ${sessionId}:`, data);
-                emitInterruptEvent(sessionId, data, 'sse');
+        const response = await fetch(API_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
+          },
+          body: JSON.stringify(requestBody),
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Request failed (${response.status}): ${errorText || 'Unknown error'}`);
+        }
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                if (data.type === 'interrupt') {
+                  console.log(`Interrupt received for session ${sessionId}:`, data.content);
+                  emitInterruptEvent(sessionId, data, 'sse');
+                  return;
+                }
+                
+                if (data.end) {
+                  // Always handle normally regardless of interrupt flag
+                  addAiMessage(sessionId, data);
+                  cleanupSSE(sessionId);
+                  return;
+                }
+                
+                // Always handle normally regardless of interrupt flag
                 addAiMessage(sessionId, data);
-                cleanupSSE(sessionId);
-                return;
+              } catch (err) {
+                console.error('Error parsing streaming response:', err);
               }
-              
-              if (data.end) {
-                addAiMessage(sessionId, data);
-                cleanupSSE(sessionId);
-                return;
-              }
-              
-              addAiMessage(sessionId, data);
-            } catch (err) {
-              console.error('Error parsing streaming response:', err);
             }
           }
         }
+        
+      } catch (err) {
+        console.error('Error sending message:', err);
+        // Only update session error for regular messages, not interrupts
+        if (!interrupt) {
+          updateSession(sessionId, { 
+            error: err.message || 'Failed to send message. Please try again.' 
+          });
+          cleanupSSE(sessionId);
+        }
       }
-      
-    } catch (err) {
-      console.error('Error sending message:', err);
-      updateSession(sessionId, { 
-        error: err.message || 'Failed to send message. Please try again.' 
-      });
+    };
+    
+
+    // Clear chat
+    const clearChat = (sessionId) => {
       cleanupSSE(sessionId);
-    }
-  }, [updateLastAccess, cleanupSSE, addAiMessage, updateSession, emitInterruptEvent, sessions]);
-  // Session-specific clear chat
-  const clearChat = useCallback((sessionId) => {
-    cleanupSSE(sessionId);
-    updateSession(sessionId, { 
-      chatTurns: [], 
-      error: null
-    });
-    
-    const refs = getSessionRefs(sessionId);
-    refs.buffer = [];
-  }, [cleanupSSE, updateSession, getSessionRefs]);
-
-  // Session-specific stop streaming
-  const stopStreaming = useCallback((sessionId) => {
-    cleanupSSE(sessionId);
-  }, [cleanupSSE]);
-
-  // Refresh session from backend
-  const refreshSession = useCallback(async (sessionId) => {
-    // Clear the initialized flag to force re-initialization
-    initializedSessions.current.delete(sessionId);
-    await initializeSession(sessionId, true);
-  }, [initializeSession]);
-
-  // Add method to manually flush all sessions
-  const flushAllSessions = useCallback(() => {
-    console.log(`Flushing all ${sessions.size} sessions from memory`);
-    Array.from(sessions.keys()).forEach(removeSession);
-  }, [sessions, removeSession]);
-
-  // Handle auth changes - expose this method for auth system to call
-  const handleAuthChange = useCallback((newUser = null, oldUser = null) => {
-    // Flush all sessions when user logs out or switches accounts
-    if (!newUser || (oldUser && newUser?.id !== oldUser?.id)) {
-      console.log('User auth changed, flushing all sessions');
-      flushAllSessions();
-    }
-  }, [flushAllSessions]);
-
-  // Get session interface
-  const getSession = useCallback((sessionId) => {
-    updateLastAccess(sessionId); // Track access
-    
-    const session = sessions.get(sessionId) || {
-      id: sessionId,
-      chatTurns: [],
-      isStreaming: false,
-      error: null,
-      context: { diagram: null, threatModel: null },
+      updateSession(sessionId, { 
+        chatTurns: [], 
+        error: null
+      });
+      
+      const refs = getSessionRefs(sessionId);
+      refs.buffer = [];
     };
-    
-    const isLoading = loadingStates.get(sessionId) || false;
-    
+
+    // Stop streaming
+    const stopStreaming = (sessionId) => {
+      cleanupSSE(sessionId);
+    };
+
+    // Refresh session
+    const refreshSession = async (sessionId) => {
+      initializedSessions.current.delete(sessionId);
+      await initializeSession(sessionId, true);
+    };
+
+    // Flush all sessions
+    const flushAllSessions = () => {
+      console.log(`Flushing all ${sessionsRef.current.size} sessions from memory`);
+      Array.from(sessionsRef.current.keys()).forEach(removeSession);
+    };
+
+    // Handle auth change
+    const handleAuthChange = (newUser = null, oldUser = null) => {
+      if (!newUser || (oldUser && newUser?.id !== oldUser?.id)) {
+        console.log('User auth changed, flushing all sessions');
+        flushAllSessions();
+      }
+    };
+
     return {
-      ...session,
-      isLoading,
-      availableTools,
-      sendMessage: (message) => sendMessage(sessionId, message),
-      clearChat: () => clearChat(sessionId),
-      stopStreaming: () => stopStreaming(sessionId),
-      dismissError: () => dismissError(sessionId),
-      refreshSession: () => refreshSession(sessionId),
-      removeSession: () => removeSession(sessionId), // Allow manual removal
-      setContext: (context) => setSessionContext(sessionId, context), // New: Set context
-      getContext: () => getSessionContext(sessionId), // New: Get context  
-      clearContext: () => clearSessionContext(sessionId), // New: Clear context
+      initializeSession,
+      prepareSession,
+      clearSession,
+      setSessionContext,
+      clearSessionContext,
+      getSessionContext,
+      sendMessage,
+      clearChat,
+      stopStreaming,
+      dismissError,
+      refreshSession,
+      removeSession,
+      flushAllSessions,
+      handleAuthChange,
+      cleanupOldSessions,
+      updateLastAccess,
     };
-  }, [sessions, loadingStates, updateLastAccess, clearChat, stopStreaming, dismissError, refreshSession, removeSession, setSessionContext, getSessionContext, clearSessionContext, availableTools]);
-
+  }, []); // Empty deps - these functions never change
 
   // Start cleanup interval
   useEffect(() => {
-    cleanupInterval.current = setInterval(cleanupOldSessions, CLEANUP_INTERVAL_MS);
+    cleanupInterval.current = setInterval(stableFunctions.cleanupOldSessions, CLEANUP_INTERVAL_MS);
     
     return () => {
       if (cleanupInterval.current) {
         clearInterval(cleanupInterval.current);
       }
     };
-  }, [cleanupOldSessions]);
+  }, [stableFunctions]);
 
   // Auto-flush on page unload/refresh
   useEffect(() => {
     const handleBeforeUnload = (event) => {
       console.log('Page unloading, flushing all sessions');
-      flushAllSessions();
+      stableFunctions.flushAllSessions();
     };
 
     const handleUnload = () => {
-      flushAllSessions();
+      stableFunctions.flushAllSessions();
     };
 
-    // Add event listeners
     window.addEventListener('beforeunload', handleBeforeUnload);
     window.addEventListener('unload', handleUnload);
 
@@ -842,19 +798,17 @@ export const ChatSessionProvider = ({ children }) => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('unload', handleUnload);
     };
-  }, [flushAllSessions]);
+  }, [stableFunctions]);
 
-  // Enhanced cleanup on unmount (component unmount)
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       console.log('ChatSessionProvider unmounting, flushing all sessions');
       
-      // Stop cleanup interval
       if (cleanupInterval.current) {
         clearInterval(cleanupInterval.current);
       }
       
-      // Clean up all sessions
       sessionRefs.current.forEach((refs) => {
         if (refs.eventSource) {
           refs.eventSource.close();
@@ -864,7 +818,6 @@ export const ChatSessionProvider = ({ children }) => {
         }
       });
       
-      // Clear all maps and sets
       sessionRefs.current.clear();
       initializedSessions.current.clear();
       initializingPromises.current.clear();
@@ -872,25 +825,32 @@ export const ChatSessionProvider = ({ children }) => {
     };
   }, []);
 
-  // MEMOIZE the context value
-  const value = useMemo(() => ({
-    getSession,
-    initializeSession,
-    prepareSession, // Add prepare functionality
-    sessions: Array.from(sessions.values()),
-    flushAllSessions,
-    handleAuthChange,
+  // Combine functions with tools data
+  const functionsValue = useMemo(() => ({
+    ...stableFunctions,
     availableTools,
     toolsLoading,
     toolsError,
-  }), [getSession, initializeSession, prepareSession, sessions, flushAllSessions, handleAuthChange, availableTools, toolsLoading, toolsError]);
+  }), [stableFunctions, availableTools, toolsLoading, toolsError]);
 
-  return <ChatSessionContext.Provider value={value}>{children}</ChatSessionContext.Provider>;
+  // Data value includes sessions and loading states
+  const dataValue = useMemo(() => ({
+    sessions,
+    loadingStates,
+  }), [sessions, loadingStates]);
+
+  return (
+    <ChatSessionFunctionsContext.Provider value={functionsValue}>
+      <ChatSessionDataContext.Provider value={dataValue}>
+        {children}
+      </ChatSessionDataContext.Provider>
+    </ChatSessionFunctionsContext.Provider>
+  );
 };
 
 // Export a hook specifically for accessing tools
 export const useAvailableTools = () => {
-  const context = useContext(ChatSessionContext);
+  const context = useContext(ChatSessionFunctionsContext);
   if (!context) {
     throw new Error('useAvailableTools must be used within a ChatSessionProvider');
   }

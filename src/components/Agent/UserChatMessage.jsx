@@ -51,7 +51,7 @@ const UserChatMessage = React.memo(({ message, user }) => {
           flex: 1,
           minWidth: 0,
           overflow: "hidden",
-          marginTop: "0px",
+          marginTop: "-14px",
         }}
       >
         <div

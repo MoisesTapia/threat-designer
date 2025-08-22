@@ -1,21 +1,29 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import MessageAvatar from "./MessageAvatar";
 import ChatButtons from "./ChatButtons";
 import ContentResolver from "./ContentResolver";
 
-const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
+const ChatMessage = React.memo(({ message, streaming, isLast, scroll, isParentFirstMount }) => {
   const substract = "330px";
-
   const isEnd = message?.[message.length - 1]?.end === true;
+  const hasScrolled = useRef(false);
 
+  console.log(isParentFirstMount);
 
   useEffect(() => {
-    if(isLast){
+    if(isLast && !hasScrolled.current){
+      hasScrolled.current = true;
+      const timeout = isParentFirstMount ? 1000 : 60;
+      
       setTimeout(() => {
         scroll();
-      }, 10);
+      }, timeout);
     }
-  }, []);
+  }, [isLast, scroll]);
+
+
+
+
   
 
   const messageBlocks = useMemo(() => {
@@ -33,7 +41,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
         const lastBlock = blocks[blocks.length - 1];
         const shouldUpdateExisting = lastBlock && 
           lastBlock.type === 'tool' && 
-          lastBlock.toolName === item.tool && 
+          lastBlock.toolName === item.tool_name && 
           !lastBlock.isComplete && // Previous block was incomplete (tool_start: true)
           !item.tool_start; // Current item completes it (tool_start: false)
         
@@ -47,7 +55,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
           // Create new tool block
           blocks.push({
             type: 'tool',
-            toolName: item.tool,
+            toolName: item.tool_name,
             content: item.content,
             isComplete: !item.tool_start, // FIXED: Complete when tool_start is false
             error: item.error,
@@ -79,6 +87,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
     return blocks;
   }, [message]);
   
+
   return (
     <div
       style={{
@@ -106,6 +115,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
           style={{
             backgroundColor: "transparent",
             borderRadius: "8px",
+            marginTop: "-14px",
           }}
         >
 {messageBlocks.map((block, index) => (
@@ -114,6 +124,7 @@ const ChatMessage = React.memo(({ message, streaming, isLast, scroll }) => {
       msg={block} 
       type={block.type} 
       isBlockComplete={block.isComplete}
+      isParentFirstMount={isParentFirstMount}
     />
   </div>
 ))}

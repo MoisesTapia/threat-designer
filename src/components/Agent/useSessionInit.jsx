@@ -1,12 +1,16 @@
-import { useContext, useEffect, useRef, useCallback, useMemo, useState } from 'react';
-import { ChatSessionContext } from './ChatContext';
+import { useContext, useEffect, useRef, useCallback, useState } from 'react';
+import { ChatSessionFunctionsContext } from './ChatContext';
 
 export const useSessionInitializer = (sessionId) => {
-  const context = useContext(ChatSessionContext);
+  const functions = useContext(ChatSessionFunctionsContext);
   const initializationRef = useRef(false);
   const [isInitialized, setIsInitialized] = useState(false);
   
-  if (!context) {
+  // Store functions in a ref to avoid recreating callbacks
+  const functionsRef = useRef(functions);
+  functionsRef.current = functions;
+  
+  if (!functions) {
     throw new Error('useSessionInitializer must be used within a ChatSessionProvider');
   }
   
@@ -17,40 +21,37 @@ export const useSessionInitializer = (sessionId) => {
       
       try {
         initializationRef.current = true;
-        await context.initializeSession(sessionId);
+        await functionsRef.current.initializeSession(sessionId);
         setIsInitialized(true);
-        console.log(`Session ${sessionId} initialized on component mount`);
+        console.log("sessions initialized");
       } catch (error) {
         console.error(`Failed to initialize session ${sessionId} on mount:`, error);
-        initializationRef.current = false; // Reset on error to allow retry
+        initializationRef.current = false;
         setIsInitialized(false);
       }
     };
 
     initializeSessionOnMount();
-  }, [context, sessionId]); // Only runs when sessionId changes
+  }, [sessionId]);
 
-  // Memoize the updateSessionContext function
+  // Stable updateSessionContext that doesn't depend on changing context
   const updateSessionContext = useCallback(async (targetSessionId, contextData) => {
     try {
+      // Use ref to access current functions without causing re-renders
+      const currentFunctions = functionsRef.current;
+      
       // Ensure session is initialized first
       if (!isInitialized || targetSessionId !== sessionId) {
-        console.log(`Waiting for session ${targetSessionId} to initialize...`);
-        await context.initializeSession(targetSessionId);
+        await currentFunctions.initializeSession(targetSessionId);
       }
       
-      const session = context.getSession(targetSessionId);
-      await session.setContext(contextData);
-      return session;
+      await currentFunctions.setSessionContext(targetSessionId, contextData);
+      return { success: true, sessionId: targetSessionId };
     } catch (error) {
       console.error(`Failed to update context for session ${targetSessionId}:`, error);
       throw error;
     }
-  }, [context, isInitialized, sessionId]); // Include dependencies
+  }, [isInitialized, sessionId]);
   
-  // Memoize the returned object
-  return useMemo(() => ({
-    updateSessionContext,
-    isInitialized, // Expose initialization state
-  }), [updateSessionContext, isInitialized]);
+  return updateSessionContext;
 };

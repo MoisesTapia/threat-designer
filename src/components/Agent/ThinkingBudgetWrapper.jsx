@@ -15,12 +15,16 @@ const ThinkingBudgetWrapper = ({ initialBudget, onBudgetChange }) => {
     }, [localBudget]);
   
     useEffect(() => {
-      return () => {
+      const timeoutId = setTimeout(() => {
         if (onBudgetChange) {
-          onBudgetChange(budgetRef.current);
+          onBudgetChange(localBudget);
         }
+      }, 200);
+
+      return () => {
+        clearTimeout(timeoutId);
       };
-    }, [onBudgetChange]);
+    }, [localBudget, onBudgetChange]);
     
     const handleSetBudget = (value) => {
       setLocalBudget(value);

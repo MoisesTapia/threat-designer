@@ -26,5 +26,9 @@ agents:
       project_name: bedrock-agentcore-agent-builder
       execution_role: arn:aws:iam::541020177866:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-1-d4f0bc5a29
       source_bucket: bedrock-agentcore-codebuild-sources-541020177866-us-east-1
-    authorizer_configuration: null
+    authorizer_configuration:
+      customJWTAuthorizer:
+        discoveryUrl: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_BUe423DH5/.well-known/openid-configuration
+        allowedClients:
+        - 292n8dds4dsi9hj27emjle1b6i
     oauth_configuration: null

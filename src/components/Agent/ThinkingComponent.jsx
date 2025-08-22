@@ -26,8 +26,6 @@ export const ReasoningComponent = ({ loading, onClick }) => {
       const calculatedDuration = Math.round((endTime - startTimeRef.current) / 1000);
       setDuration(calculatedDuration);
       setHasFinishedThinking(true);
-      // Remove this line to prevent auto-expansion
-      // setIsExpanded(true); 
     }
   }, [loading, hasFinishedThinking, wasEverLoading]);
 
@@ -56,6 +54,7 @@ export const ReasoningComponent = ({ loading, onClick }) => {
   const containerStyle = {
     display: "flex",
     alignItems: "center",
+    paddingTop: "16px",
     justifyContent: "flex-start",
     fontFamily: "Arial, sans-serif",
     color: getTextColor(),

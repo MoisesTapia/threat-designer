@@ -1,5 +1,6 @@
 from langchain_core.messages import SystemMessage
 
+
 def system_prompt(context):
 
     main_prompt = """

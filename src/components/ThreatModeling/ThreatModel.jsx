@@ -16,6 +16,7 @@ import { ReplayModalComponent } from "./ReplayModal";
 import { Spinner } from "@cloudscape-design/components";
 import { InfoContent } from "../HelpPanel/InfoContent";
 import DeleteModal from "./DeleteModal";
+import { useContext } from 'react';
 import {
   getThreatModelingStatus,
   getThreatModelingTrail,
@@ -30,7 +31,7 @@ import { useSplitPanel } from "../../SplitPanelContext";
 import "./ThreatModeling.css";
 import { useEventReceiver } from '../Agent/useEventReceiver';
 import { useSessionInitializer } from "../Agent/useSessionInit";
-
+import { ChatSessionFunctionsContext } from '../Agent/ChatContext';
 
 const blobToBase64 = (blob) => {
   return new Promise((resolve) => {
@@ -53,7 +54,8 @@ const arrayToObjects = (key, stringArray) => {
 
 export const ThreatModel = ({ user }) => {
   const { id = null } = useParams();
-  
+  const updateSessionContext = useSessionInitializer(id);
+
   const BreadcrumbItems = [
     { text: "Threat Catalog", href: "/threat-catalog" },
     { text: `${id}`, href: `/${id}` },
@@ -76,7 +78,8 @@ export const ThreatModel = ({ user }) => {
   const navigate = useNavigate();
   const [deleteModalVisible, setDeleteModal] = useState(false);
   const { setTrail, handleHelpButtonClick, setSplitPanelOpen } = useSplitPanel();
-  const {updateSessionContext } = useSessionInitializer()
+  const functions = useContext(ChatSessionFunctionsContext);
+
   const handleReplayThreatModeling = async (iteration, reasoning) => {
     try {
       setIteration(0);
@@ -102,9 +105,14 @@ export const ThreatModel = ({ user }) => {
     }
   };
 
+  const handleSendMessage = useCallback(async (id, response) => {
+    console.log("sending message");
+    await functions.sendMessage(id, response, true, response);
+  }, [functions]);
+
   const initializeThreatModelSession = useCallback(async (threatModelData) => {
     const sessionContext = {
-      diagram: threatModelData.s3Location,
+      diagram: threatModelData.s3_location,
       threatModel: {
         threats: threatModelData.threat_list.threats || [],
         summary: threatModelData.summary,
@@ -118,13 +126,79 @@ export const ThreatModel = ({ user }) => {
     } catch (error) {
       console.error(`Failed to initialize session ${id}:`, error);
     }
-  }, [updateSessionContext, id]);
+  }, [id, updateSessionContext]);
 
+  // New function to handle threat updates from interrupts
+  const handleThreatUpdates = useCallback((toolName, threatsPayload) => {
+    if (!response?.item?.threat_list?.threats || !Array.isArray(threatsPayload)) {
+      console.error("Invalid threat data for update");
+      return;
+    }
+
+    let updatedThreats = [...response.item.threat_list.threats];
+
+    switch (toolName) {
+      case 'add_threats':
+        // Append new threats to existing ones
+        updatedThreats = [...updatedThreats, ...threatsPayload];
+        console.log(`Added ${threatsPayload.length} new threats`);
+        break;
+        
+      case 'edit_threats':
+        // Replace existing threats by matching names
+        threatsPayload.forEach(newThreat => {
+          const existingIndex = updatedThreats.findIndex(
+            existingThreat => existingThreat.name === newThreat.name
+          );
+          if (existingIndex !== -1) {
+            updatedThreats[existingIndex] = newThreat;
+            console.log(`Updated threat: ${newThreat.name}`);
+          } else {
+            console.warn(`Threat not found for editing: ${newThreat.name}`);
+          }
+        });
+        break;
+        
+      case 'delete_threats':
+        // Remove threats by matching names
+        const threatNamesToDelete = threatsPayload.map(threat => threat.name);
+        const originalCount = updatedThreats.length;
+        updatedThreats = updatedThreats.filter(
+          existingThreat => !threatNamesToDelete.includes(existingThreat.name)
+        );
+        console.log(`Deleted ${originalCount - updatedThreats.length} threats`);
+        break;
+        
+      default:
+        console.warn(`Unknown threat operation: ${toolName}`);
+        return;
+    }
+
+    // Create new state with updated threats
+    const newState = { ...response };
+    newState.item = { ...newState.item };
+    newState.item.threat_list = { ...newState.item.threat_list };
+    newState.item.threat_list.threats = updatedThreats;
+    
+    // Trigger the same side effects as updateThreatModeling
+    initializeThreatModelSession(newState.item);
+    setResponse(newState);
+  }, [response, initializeThreatModelSession]);
 
   const handleInterruptEvent = (event) => {
     const { interruptMessage, source, timestamp } = event.payload;
-    
     console.log(`Interrupt received from ${source}:`, interruptMessage);
+    
+    const payload = interruptMessage.content.payload;
+    const toolName = interruptMessage.content.tool_name;
+    console.log(payload);
+    
+    // Handle threat updates based on tool name
+    if (['add_threats', 'edit_threats', 'delete_threats'].includes(toolName)) {
+      handleThreatUpdates(toolName, payload);
+    }
+    
+    handleSendMessage(id, toolName);
   };
 
   useEventReceiver('CHAT_INTERRUPT', id, handleInterruptEvent);
@@ -233,14 +307,13 @@ export const ThreatModel = ({ user }) => {
           throw new Error(`Invalid type: ${type}`);
       }
 
-      initializeThreatModelSession(
-        newState.item)
-
+      initializeThreatModelSession(newState.item);
       setResponse(newState);
     },
     [response, setResponse, initializeThreatModelSession]
   );
 
+  // Rest of your existing useEffect and functions remain the same...
   useEffect(() => {
     let intervalId;
     const checkStatus = async () => {
@@ -265,8 +338,7 @@ export const ThreatModel = ({ user }) => {
             if (!previousResponse.current) {
               previousResponse.current = JSON.parse(JSON.stringify(resultsResponse.data));
             }
-            await initializeThreatModelSession(
-              resultsResponse.data.item)
+            await initializeThreatModelSession(resultsResponse.data.item);
 
             setState((prevState) => ({
               ...prevState,
@@ -328,6 +400,7 @@ export const ThreatModel = ({ user }) => {
     return () => clearInterval(intervalId);
   }, [id, trigger]);
 
+  // Rest of your existing functions (handleDelete, handleRefresh, etc.) remain the same...
   const handleDelete = async () => {
     setLoading(true);
     try {
@@ -376,7 +449,6 @@ export const ThreatModel = ({ user }) => {
     const hasChanges = JSON.stringify(response) !== JSON.stringify(previousResponse.current);
     if (hasChanges) {
       showAlert("Info");
-    } else {
     }
   };
 
