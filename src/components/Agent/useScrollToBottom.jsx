@@ -51,7 +51,7 @@ export function useScrollToBottom(ref) {
       isAnimatingRef.current = false;
       console.error("Error scrolling:", err);
     }
-  }, [ref]); // Only recreate if ref changes
+  }, [ref]);
   
   const checkScrollPosition = useCallback(() => {
     const container = ref.current;
@@ -71,7 +71,7 @@ export function useScrollToBottom(ref) {
     
     // Attach scroll listener
     const handleScroll = () => checkScrollPosition();
-    container.addEventListener("scroll", handleScroll);
+    container.addEventListener("scroll", handleScroll, { passive: true });
     
     // Observe content changes
     const observer = new MutationObserver(() => {
@@ -87,7 +87,7 @@ export function useScrollToBottom(ref) {
       container.removeEventListener("scroll", handleScroll);
       observer.disconnect();
     };
-  }, [checkScrollPosition]);
+  }, [checkScrollPosition, ref.current]); // Add ref.current as dependency
   
   return { showButton, scrollToBottom };
 }
